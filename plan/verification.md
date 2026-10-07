@@ -153,3 +153,13 @@ Branch restarted from the merged `main` (4bf2981). Checks run on the working tre
 | Docker smoke (`scripts/docker-smoke.ts --keep`) and `docker compose run --rm worker bootstrap:org ...` | passed: images rebuilt from this tree, bootstrap (migrate + seed, including the new migration), dashboard and API through nginx, emulator sign-in, restart persistence, seed idempotency; then `bootstrap:org` inside the Compose stack created an organization and printed its link (exit 0) and refused the seeded demo organization with `BOOTSTRAP_REFUSED` (exit 1); `docker compose down` completed |
 
 Not run: nothing in this change touches the Meta adapter, Cloud Tasks or the dashboard beyond the existing acceptance page, so live Meta and GCP verification remain external as before.
+
+## Review loop for pull request #20 (first-organization bootstrap)
+
+| Round | Commit | Outcome |
+| --- | --- | --- |
+| 1 (pull request opened) | 2f8f7e9 | P1: a re-run with a corrected Admin address left the earlier address's link valid. Fixed in 14740fd: a re-run revokes every pending bootstrap invitation of the organization; the integration test covers the corrected-address case. |
+| 2 | 14740fd | P1: invitation acceptance did not take the organization lock, so an acceptance racing a re-run could leave a second valid Admin link. Fixed in c90ff93: acceptance locks the organization row before consuming the invitation; a gated integration test interleaves a re-run and an acceptance and fails with a 500 without the lock. |
+| 3 | c90ff93 | P2: the acceptance compares expiry against a clock reading taken before the lock wait. Tracked as issue #21, not implemented. |
+
+All three review threads are resolved. After the fixes, on the tree of c90ff93: `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 68, integration 12 suites / 74 tests, WhatsApp assets 8 checks, production builds); `pnpm test:e2e` passed (9 journeys). The commit that records this outcome changes only `plan/` files and was not sent for a further round.

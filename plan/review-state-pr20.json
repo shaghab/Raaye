@@ -27,6 +27,16 @@
       "reviewedAt": "2026-10-07T16:50:58Z",
       "findings": 1,
       "outcome": "1 P1 finding, fixed"
+    },
+    {
+      "round": 3,
+      "headSha": "c90ff93",
+      "requestedAt": "2026-10-07T17:02:29.973809+00:00",
+      "status": "completed",
+      "requestCommentId": 6042702674,
+      "reviewedAt": "2026-10-07T17:05:36Z",
+      "findings": 1,
+      "outcome": "1 P2 finding, tracked"
     }
   ],
   "processedFindings": [
@@ -48,11 +58,30 @@
       "file": "libs/server/src/organizations/organization.service.ts",
       "title": "Serialize bootstrap reruns with invitation acceptance",
       "action": "fixed",
-      "commit": null,
-      "resolved": false
+      "commit": "c90ff93",
+      "resolved": true,
+      "replyCommentId": 4209643751
+    },
+    {
+      "commentId": 4209684742,
+      "threadId": "PRRT_kwDOU--Sjc6qAmQq",
+      "priority": "P2",
+      "file": "libs/server/src/organizations/organization.service.ts",
+      "title": "Re-read the clock after acquiring the organization lock",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/21",
+      "resolved": true,
+      "replyCommentId": 4209696840
     }
   ],
-  "issues": [],
+  "issues": [
+    {
+      "number": 21,
+      "url": "https://github.com/shaghab/Raaye/issues/21",
+      "title": "Invitation acceptance should re-read the clock after acquiring the organization lock",
+      "priority": "P2"
+    }
+  ],
   "blockers": [],
-  "updatedAt": "2026-10-07T16:54:00.828277+00:00"
+  "updatedAt": "2026-10-07T17:07:08.768273+00:00"
 }
