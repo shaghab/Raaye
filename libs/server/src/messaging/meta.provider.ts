@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { APP_CONFIG, type AppConfig } from '../config/env';
 import { getLogger } from '../observability/logger';
+import { resolveSecret } from './secrets';
 import { buildMetaMessagePayload } from './meta-payload';
 import type { ProviderAdapter, SendRequest, SendResult } from "./provider";
 
@@ -57,8 +58,10 @@ export class MetaMessagingProvider implements ProviderAdapter {
 
   async send(request: SendRequest): Promise<SendResult> {
     if (!request.connection.phoneNumberId) return { outcome: 'FAILED', errorCode: 'CONNECTION_NOT_CONFIGURED', retryable: false };
-    const token = this.config.META_ACCESS_TOKEN ?? null;
-    if (!token) return { outcome: 'FAILED', errorCode: 'ACCESS_TOKEN_MISSING', retryable: false };
+    // Each sender connection authenticates with its own referenced secret; a bound reference
+    // that does not resolve fails closed instead of borrowing the process-wide token.
+    const token = request.connection.accessTokenRef ? resolveSecret(request.connection.accessTokenRef) : (this.config.META_ACCESS_TOKEN ?? null);
+    if (!token) return { outcome: 'FAILED', errorCode: 'ACCESS_TOKEN_MISSING', retryable: false, detail: request.connection.accessTokenRef ? `Access token reference "${request.connection.accessTokenRef}" does not resolve` : 'META_ACCESS_TOKEN is not configured' };
     const version = request.connection.graphVersion ?? this.config.META_GRAPH_VERSION ?? 'v24.0';
     let payload: Record<string, unknown>;
     try {

@@ -1,7 +1,8 @@
 import type { RenderedMessage } from './rendered';
 
 export interface SendRequest {
-  connection: { id: string; phoneNumberId: string | null; graphVersion: string | null; appKey: string };
+  /** The organization-owned sender; `accessTokenRef` names the secret that authenticates its sends. */
+  connection: { id: string; phoneNumberId: string | null; graphVersion: string | null; appKey: string; accessTokenRef: string | null };
   /** Digit-only destination (wa_id). */
   to: string;
   message: RenderedMessage;

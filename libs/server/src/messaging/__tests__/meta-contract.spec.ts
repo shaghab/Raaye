@@ -151,23 +151,38 @@ describe('Meta send payloads and error classification', () => {
         return { status: 200, text: async () => JSON.stringify({ messages: [{ id: 'wamid.live.1' }] }) };
       },
     });
-    const accepted = await provider.send({ connection: { id: 'c', phoneNumberId: '111', graphVersion: 'v24.0', appKey: 'k' }, to: '923001234567', message: { type: 'text', body: 'Hi' }, messageId: 'm1', contactId: 'contact-1', attemptNumber: 1, isTest: false });
+    const accepted = await provider.send({ connection: { id: 'c', phoneNumberId: '111', graphVersion: 'v24.0', appKey: 'k', accessTokenRef: null }, to: '923001234567', message: { type: 'text', body: 'Hi' }, messageId: 'm1', contactId: 'contact-1', attemptNumber: 1, isTest: false });
     expect(accepted).toEqual({ outcome: 'ACCEPTED', providerMessageId: 'wamid.live.1' });
     expect(calls[0].url).toBe('https://graph.facebook.com/v24.0/111/messages');
     expect(calls[0].body).toContain('923001234567');
 
     const failing = new MetaMessagingProvider(liveConfig(), { fetch: async () => ({ status: 400, text: async () => JSON.stringify({ error: { code: 131026, message: 'Receiver incapable' } }) }) });
-    expect(await failing.send({ connection: { id: 'c', phoneNumberId: '111', graphVersion: null, appKey: 'k' }, to: '1', message: { type: 'text', body: 'Hi' }, messageId: 'm2', contactId: 'contact-1', attemptNumber: 1, isTest: false })).toMatchObject({ outcome: 'FAILED', errorCode: 'META_131026', retryable: false });
+    expect(await failing.send({ connection: { id: 'c', phoneNumberId: '111', graphVersion: null, appKey: 'k', accessTokenRef: null }, to: '1', message: { type: 'text', body: 'Hi' }, messageId: 'm2', contactId: 'contact-1', attemptNumber: 1, isTest: false })).toMatchObject({ outcome: 'FAILED', errorCode: 'META_131026', retryable: false });
 
     const timingOut = new MetaMessagingProvider(liveConfig(), { fetch: () => new Promise((_resolve, reject) => setTimeout(() => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), 5)) }, 1);
-    expect(await timingOut.send({ connection: { id: 'c', phoneNumberId: '111', graphVersion: null, appKey: 'k' }, to: '1', message: { type: 'text', body: 'Hi' }, messageId: 'm3', contactId: 'contact-1', attemptNumber: 1, isTest: false })).toMatchObject({ outcome: 'UNKNOWN', errorCode: 'TIMEOUT' });
+    expect(await timingOut.send({ connection: { id: 'c', phoneNumberId: '111', graphVersion: null, appKey: 'k', accessTokenRef: null }, to: '1', message: { type: 'text', body: 'Hi' }, messageId: 'm3', contactId: 'contact-1', attemptNumber: 1, isTest: false })).toMatchObject({ outcome: 'UNKNOWN', errorCode: 'TIMEOUT' });
 
     const refused = new MetaMessagingProvider(liveConfig(), { fetch: async () => { throw new Error('connect ECONNREFUSED'); } });
-    expect(await refused.send({ connection: { id: 'c', phoneNumberId: '111', graphVersion: null, appKey: 'k' }, to: '1', message: { type: 'text', body: 'Hi' }, messageId: 'm4', contactId: 'contact-1', attemptNumber: 1, isTest: false })).toMatchObject({ outcome: 'FAILED', errorCode: 'NETWORK', retryable: true });
+    expect(await refused.send({ connection: { id: 'c', phoneNumberId: '111', graphVersion: null, appKey: 'k', accessTokenRef: null }, to: '1', message: { type: 'text', body: 'Hi' }, messageId: 'm4', contactId: 'contact-1', attemptNumber: 1, isTest: false })).toMatchObject({ outcome: 'FAILED', errorCode: 'NETWORK', retryable: true });
+  });
+
+  it('authenticates each send with the sender connection\'s own token reference', async () => {
+    process.env['TENANT_A_WA_TOKEN'] = 'tenant-a-token';
+    const seen: string[] = [];
+    const provider = new MetaMessagingProvider(liveConfig(), { fetch: async (_url, init) => { seen.push(init.headers['Authorization']); return { status: 200, text: async () => JSON.stringify({ messages: [{ id: 'wamid.t' }] }) }; } });
+    const base = { to: '1', message: { type: 'text' as const, body: 'Hi' }, messageId: 'm6', contactId: 'contact-1', attemptNumber: 1, isTest: false };
+    expect(await provider.send({ ...base, connection: { id: 'c', phoneNumberId: '111', graphVersion: null, appKey: 'k', accessTokenRef: 'TENANT_A_WA_TOKEN' } })).toMatchObject({ outcome: 'ACCEPTED' });
+    expect(seen).toEqual(['Bearer tenant-a-token']);
+    expect(await provider.send({ ...base, connection: { id: 'c', phoneNumberId: '111', graphVersion: null, appKey: 'k', accessTokenRef: null } })).toMatchObject({ outcome: 'ACCEPTED' });
+    expect(seen[1]).toBe('Bearer EAAtesttoken');
+    const unresolved = await provider.send({ ...base, connection: { id: 'c', phoneNumberId: '111', graphVersion: null, appKey: 'k', accessTokenRef: 'MISSING_TENANT_TOKEN' } });
+    expect(unresolved).toMatchObject({ outcome: 'FAILED', errorCode: 'ACCESS_TOKEN_MISSING', retryable: false });
+    expect(seen).toHaveLength(2);
+    delete process.env['TENANT_A_WA_TOKEN'];
   });
 
   it('treats a connection reset after the request was attempted as an ambiguous send (R43)', async () => {
-    const request = { connection: { id: 'c', phoneNumberId: '111', graphVersion: null, appKey: 'k' }, to: '1', message: { type: 'text' as const, body: 'Hi' }, messageId: 'm5', contactId: 'contact-1', attemptNumber: 1, isTest: false };
+    const request = { connection: { id: 'c', phoneNumberId: '111', graphVersion: null, appKey: 'k', accessTokenRef: null }, to: '1', message: { type: 'text' as const, body: 'Hi' }, messageId: 'm5', contactId: 'contact-1', attemptNumber: 1, isTest: false };
     for (const detail of ['fetch failed: read ECONNRESET', 'socket hang up', 'write EPIPE', 'other side closed']) {
       const reset = new MetaMessagingProvider(liveConfig(), { fetch: async () => { throw new Error(detail); } });
       expect(await reset.send(request)).toMatchObject({ outcome: 'UNKNOWN', errorCode: 'NETWORK_AFTER_SEND' });

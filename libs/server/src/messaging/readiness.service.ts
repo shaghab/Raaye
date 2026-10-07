@@ -163,7 +163,7 @@ export class MessagingReadinessService {
     if (this.config.isLiveMessaging && connection.wabaId) {
       for (const template of templates) {
         try {
-          const statuses = await this.management.templateStatus(connection.wabaId, template.providerName);
+          const statuses = await this.management.templateStatus(connection.wabaId, template.providerName, connection.accessTokenRef);
           const match = statuses.find((status) => status.language === template.locale) ?? statuses[0];
           await db.templateBinding.update({ where: { id: template.id }, data: { status: mapTemplateStatus(match?.status), category: match?.category ?? template.category, lastCheckedAt: now } });
         } catch {

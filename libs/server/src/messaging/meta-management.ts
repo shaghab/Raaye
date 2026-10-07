@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { APP_CONFIG, type AppConfig } from '../config/env';
+import { resolveSecret } from './secrets';
 
 export interface TemplateStatusResult {
   name: string;
@@ -27,9 +28,10 @@ export class MetaManagementClient {
     return this.config.META_GRAPH_VERSION ?? 'v24.0';
   }
 
-  private token(): string {
-    const token = this.config.META_ACCESS_TOKEN ?? null;
-    if (!token) throw new Error('META_ACCESS_TOKEN is not configured');
+  /** The connection's referenced secret when one is bound, otherwise the process-wide token. */
+  private token(accessTokenRef?: string | null): string {
+    const token = accessTokenRef ? resolveSecret(accessTokenRef) : (this.config.META_ACCESS_TOKEN ?? null);
+    if (!token) throw new Error(accessTokenRef ? `Access token reference "${accessTokenRef}" does not resolve` : 'META_ACCESS_TOKEN is not configured');
     return token;
   }
 
@@ -38,9 +40,9 @@ export class MetaManagementClient {
     return `${request.method} https://graph.facebook.com/${this.version}/${request.path} ${request.method === 'POST' ? body : ''}`.trim();
   }
 
-  async call<T>(request: ManagementRequest): Promise<T> {
+  async call<T>(request: ManagementRequest, accessTokenRef?: string | null): Promise<T> {
     const url = `https://graph.facebook.com/${this.version}/${request.path}`;
-    const headers: Record<string, string> = { Authorization: `Bearer ${this.token()}` };
+    const headers: Record<string, string> = { Authorization: `Bearer ${this.token(accessTokenRef)}` };
     let body: string | FormData | undefined;
     if (request.body instanceof FormData) body = request.body;
     else if (request.body) {
@@ -54,11 +56,14 @@ export class MetaManagementClient {
   }
 
   /** GET /{WABA_ID}/message_templates filtered by name. */
-  async templateStatus(wabaId: string, name: string): Promise<TemplateStatusResult[]> {
-    const result = await this.call<{ data?: { name: string; language: string; status: string; category?: string }[] }>({
-      method: 'GET',
-      path: `${encodeURIComponent(wabaId)}/message_templates?name=${encodeURIComponent(name)}&fields=name,status,language,category`,
-    });
+  async templateStatus(wabaId: string, name: string, accessTokenRef?: string | null): Promise<TemplateStatusResult[]> {
+    const result = await this.call<{ data?: { name: string; language: string; status: string; category?: string }[] }>(
+      {
+        method: 'GET',
+        path: `${encodeURIComponent(wabaId)}/message_templates?name=${encodeURIComponent(name)}&fields=name,status,language,category`,
+      },
+      accessTokenRef,
+    );
     return (result.data ?? []).map((item) => ({ name: item.name, language: item.language, status: item.status, category: item.category ?? null }));
   }
 

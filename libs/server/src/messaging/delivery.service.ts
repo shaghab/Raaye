@@ -158,7 +158,7 @@ export class DeliveryService implements JobHandler {
       return created;
     });
     const result = await this.provider.send({
-      connection: { id: message.connection.id, phoneNumberId: message.connection.phoneNumberId, graphVersion: message.connection.graphVersion, appKey: message.connection.appKey },
+      connection: { id: message.connection.id, phoneNumberId: message.connection.phoneNumberId, graphVersion: message.connection.graphVersion, appKey: message.connection.appKey, accessTokenRef: message.connection.accessTokenRef },
       to: message.contact.phoneE164.replace(/^\+/, ''),
       message: rendered,
       messageId: message.id,
