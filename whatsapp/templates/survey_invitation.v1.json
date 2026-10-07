@@ -1,0 +1,25 @@
+{
+  "$comment": "Proposal for the business-initiated survey invitation. Submit through WhatsApp Manager or POST /{WABA_ID}/message_templates. Approval, category assignment and availability are decided by Meta, not by this file.",
+  "purpose": "SURVEY_INVITATION",
+  "assetVersion": "survey_invitation.v1",
+  "name": "raaye_survey_invitation",
+  "language": "en",
+  "category": "UTILITY",
+  "allow_category_change": true,
+  "parameter_format": "POSITIONAL",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}} invites you to take part in a short, voluntary WhatsApp survey: \"{{2}}\". Answers are linked to your contact record for this organization and are visible only to its authorized administrators. Reply STOP at any time to receive no further messages.",
+      "example": { "body_text": [["Public Interest Law Association of Pakistan", "Public transport in Lahore"]] }
+    },
+    {
+      "type": "BUTTONS",
+      "buttons": [{ "type": "QUICK_REPLY", "text": "Start survey" }]
+    }
+  ],
+  "adapterMapping": {
+    "body": ["organization_name", "survey_title"],
+    "button": { "index": 0, "sub_type": "quick_reply", "payload": "action_token" }
+  }
+}

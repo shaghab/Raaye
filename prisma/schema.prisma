@@ -1,0 +1,1393 @@
+// Raaye logical data model. Every tenant-owned table carries organization_id and
+// child rows reference parents through tenant-qualified composite foreign keys so a
+// row in organization A can never point at a row in organization B.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../libs/server/src/persistence/generated"
+  runtime      = "nodejs"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  SURVEY_MANAGER
+  VIEWER
+}
+
+enum MembershipStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum UserState {
+  ACTIVE
+  DISABLED
+}
+
+enum Gender {
+  WOMAN
+  MAN
+  ANOTHER_IDENTITY
+  PREFER_NOT_TO_SAY
+}
+
+enum AgeBand {
+  UNDER_18
+  AGE_18_24
+  AGE_25_34
+  AGE_35_44
+  AGE_45_54
+  AGE_55_64
+  AGE_65_PLUS
+  PREFER_NOT_TO_SAY
+}
+
+enum MembershipKind {
+  MEMBER
+  NON_MEMBER
+  UNKNOWN
+}
+
+enum ValueSource {
+  ADMIN
+  IMPORT
+  SELF_REPORTED
+}
+
+enum ConsentScope {
+  SURVEY_INVITATIONS
+  SURVEY_RESULTS
+}
+
+enum ConsentEventType {
+  GRANTED
+  WITHDRAWN
+  RESET
+}
+
+enum ConsentStatus {
+  UNKNOWN
+  GRANTED
+  WITHDRAWN
+}
+
+enum ConsentSource {
+  STAFF_RECORDED
+  IMPORT_ATTESTATION
+  PARTICIPANT_REPLY
+  PARTICIPANT_STOP
+  STAFF_OPT_OUT
+  PHONE_CHANGED
+  SEED
+}
+
+enum EnrollmentState {
+  AWAITING_NAME
+  AWAITING_CONSENT
+  COMPLETED
+  DECLINED
+  EXPIRED
+}
+
+enum SurveyState {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  CLOSED
+}
+
+enum QuestionType {
+  SINGLE_CHOICE
+  MULTI_CHOICE
+  RATING
+}
+
+enum QuestionPreset {
+  YES_NO
+  YES_NO_INDIFFERENT
+  CUSTOM
+}
+
+enum RunKind {
+  LIVE
+  TEST
+}
+
+enum RunState {
+  SCHEDULED
+  ACTIVE
+  CLOSED
+  CANCELED
+}
+
+enum InvitationState {
+  PENDING
+  QUEUED
+  ACCEPTED
+  FAILED
+  UNKNOWN
+  SUPPRESSED
+  CANCELED
+}
+
+enum ParticipationState {
+  STARTED
+  COMPLETED
+}
+
+enum ProfileOfferState {
+  NOT_OFFERED
+  OFFERED
+  COMPLETED
+  SKIPPED
+  ABANDONED
+}
+
+enum AnswerSource {
+  BUTTON
+  LIST
+  FLOW
+  TEMPLATE_BUTTON
+  TEXT_FALLBACK
+}
+
+enum ActionPurpose {
+  START_SURVEY
+  CONTINUE_SURVEY
+  SWITCH_SURVEY
+  ANSWER_OPTION
+  QUESTION_FLOW
+  EDIT_QUESTION
+  PROFILE_OFFER_ACCEPT
+  PROFILE_OFFER_SKIP
+  PROFILE_FLOW
+  CONSENT_ACCEPT
+  CONSENT_DECLINE
+  VIEW_RESULTS
+  MENU_SELECT
+}
+
+enum ActionMode {
+  LIVE
+  TEST
+}
+
+enum MessagingProvider {
+  MOCK
+  META
+}
+
+enum ConnectionMode {
+  MOCK
+  LIVE
+}
+
+enum TemplatePurpose {
+  SURVEY_INVITATION
+  RESULTS_AVAILABLE
+}
+
+enum TemplateStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAUSED
+  DISABLED
+  UNKNOWN
+}
+
+enum FlowPurpose {
+  SINGLE_CHOICE
+  MULTI_CHOICE
+  PROFILE
+}
+
+enum FlowStatus {
+  DRAFT
+  PUBLISHED
+  DEPRECATED
+  MISSING
+  UNKNOWN
+}
+
+enum MessageKind {
+  INVITATION
+  QUESTION
+  ACKNOWLEDGEMENT
+  COMMAND_REPLY
+  OPT_OUT_ACK
+  PROFILE_OFFER
+  PROFILE_FLOW
+  RESULTS_INVITATION
+  RESULTS_CONTENT
+  ENROLLMENT
+}
+
+enum MessageState {
+  PENDING
+  SENDING
+  ACCEPTED
+  FAILED
+  UNKNOWN
+  SUPPRESSED
+  CANCELED
+}
+
+enum DeliveryState {
+  QUEUED
+  ACCEPTED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  UNKNOWN
+  SUPPRESSED
+  CANCELED
+}
+
+enum AttemptOutcome {
+  IN_FLIGHT
+  ACCEPTED
+  FAILED
+  UNKNOWN
+}
+
+enum ProviderStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum InboundKind {
+  TEXT
+  BUTTON_REPLY
+  LIST_REPLY
+  TEMPLATE_BUTTON
+  FLOW_REPLY
+  UNSUPPORTED
+}
+
+enum InboundProcessingState {
+  PENDING
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+enum JobKind {
+  ACTIVATE_SURVEY
+  CLOSE_SURVEY
+  SEND_INVITATION
+  PROCESS_INBOUND
+  SEND_QUESTION
+  SEND_ACKNOWLEDGEMENT
+  SEND_MESSAGE
+  SEND_RESULTS_INVITATION
+  SEND_RESULTS_CONTENT
+  SWEEP_DUE_WORK
+  CLEANUP_RETENTION
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELED
+}
+
+enum SnapshotBroadcastState {
+  PENDING
+  QUEUED
+  COMPLETED
+  REVOKED
+}
+
+enum ResultAccessState {
+  PENDING
+  INVITED
+  VIEWED
+  SUPPRESSED
+  FAILED
+  UNKNOWN
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  PARTICIPANT
+}
+
+enum ImportFileType {
+  CSV
+  XLSX
+}
+
+enum DuplicateMode {
+  SKIP_EXISTING
+  UPDATE_NON_EMPTY_FIELDS
+}
+
+enum ImportState {
+  UPLOADED
+  PREVIEWED
+  CONFIRMED
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+enum ImportRowStatus {
+  CREATE
+  UPDATE
+  SKIP
+  ERROR
+}
+
+// ---------------------------------------------------------------------------
+// Control plane: organizations, users, memberships
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id                       String   @id @default(uuid()) @db.Uuid
+  name                     String
+  slug                     String   @unique
+  timezone                 String   @default("Asia/Karachi")
+  defaultLocale            String   @default("en") @map("default_locale")
+  privacyUrl               String?  @map("privacy_url")
+  supportContact           String?  @map("support_contact")
+  participantNotice        String   @map("participant_notice")
+  participantNoticeVersion Int      @default(1) @map("participant_notice_version")
+  profileOnboardingEnabled Boolean  @default(true) @map("profile_onboarding_enabled")
+  defaultDurationSeconds   Int      @default(172800) @map("default_duration_seconds")
+  defaultEditWindowSeconds Int      @default(120) @map("default_edit_window_seconds")
+  livePolicyReviewedAt     DateTime? @map("live_policy_reviewed_at") @db.Timestamptz(6)
+  livePolicyReviewedById   String?  @map("live_policy_reviewed_by_id") @db.Uuid
+  isDemo                   Boolean  @default(false) @map("is_demo")
+  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships         OrganizationMembership[]
+  staffInvitations    StaffInvitation[]
+  contacts            Contact[]
+  consentEvents       ConsentEvent[]
+  groups              Group[]
+  tags                Tag[]
+  contactGroups       ContactGroup[]
+  contactTags         ContactTag[]
+  enrollments         Enrollment[]
+  surveys             Survey[]
+  surveyRevisions     SurveyRevision[]
+  questions           Question[]
+  questionOptions     QuestionOption[]
+  surveyRuns          SurveyRun[]
+  surveyRecipients    SurveyRecipient[]
+  invitations         Invitation[]
+  participations      Participation[]
+  conversations       Conversation[]
+  answers             Answer[]
+  answerRevisions     AnswerRevision[]
+  answerSelections    AnswerSelection[]
+  actionBindings      ActionBinding[]
+  connections         MessagingConnection[]
+  templateBindings    TemplateBinding[]
+  flowBindings        FlowBinding[]
+  messages            Message[]
+  messageAttempts     MessageAttempt[]
+  messageStatusEvents MessageStatusEvent[]
+  inboundEvents       InboundEvent[]
+  jobs                Job[]
+  resultSnapshots     ResultSnapshot[]
+  resultRecipients    ResultRecipient[]
+  auditEvents         AuditEvent[]
+  importBatches       ImportBatch[]
+  importRows          ImportRow[]
+  idempotencyKeys     IdempotencyKey[]
+
+  @@map("organizations")
+}
+
+model User {
+  id          String    @id @default(uuid()) @db.Uuid
+  firebaseUid String    @unique @map("firebase_uid")
+  email       String    @unique
+  displayName String?   @map("display_name")
+  state       UserState @default(ACTIVE)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships OrganizationMembership[]
+
+  @@map("users")
+}
+
+model OrganizationMembership {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  role           Role
+  status         MembershipStatus @default(ACTIVE)
+  revokedAt      DateTime?        @map("revoked_at") @db.Timestamptz(6)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@unique([organizationId, userId])
+  @@unique([organizationId, id])
+  @@index([userId, status])
+  @@index([organizationId, role, status])
+  @@map("organization_memberships")
+}
+
+model StaffInvitation {
+  id               String    @id @default(uuid()) @db.Uuid
+  organizationId   String    @map("organization_id") @db.Uuid
+  email            String
+  role             Role
+  tokenHash        String    @unique @map("token_hash")
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  acceptedAt       DateTime? @map("accepted_at") @db.Timestamptz(6)
+  acceptedByUserId String?   @map("accepted_by_user_id") @db.Uuid
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  invitedByUserId  String    @map("invited_by_user_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, email])
+  @@map("staff_invitations")
+}
+
+// ---------------------------------------------------------------------------
+// Contacts, consent, groups and tags
+// ---------------------------------------------------------------------------
+
+model Contact {
+  id                       String          @id @default(uuid()) @db.Uuid
+  organizationId           String          @map("organization_id") @db.Uuid
+  name                     String
+  phoneE164                String          @map("phone_e164")
+  providerIdentity         String?         @map("provider_identity")
+  city                     String?
+  cityNormalized           String?         @map("city_normalized")
+  district                 String?
+  districtNormalized       String?         @map("district_normalized")
+  gender                   Gender?
+  ageBand                  AgeBand?        @map("age_band")
+  ageYears                 Int?            @map("age_years")
+  ageAsOf                  DateTime?       @map("age_as_of") @db.Date
+  occupation               String?
+  membership               MembershipKind  @default(UNKNOWN)
+  membershipSource         ValueSource?    @map("membership_source")
+  selfReportedMembership   MembershipKind? @map("self_reported_membership")
+  selfReportedMembershipAt DateTime?       @map("self_reported_membership_at") @db.Timestamptz(6)
+  profileProvenance        Json?           @map("profile_provenance")
+  preferredLocale          String          @default("en") @map("preferred_locale")
+  consentInvitations       ConsentStatus   @default(UNKNOWN) @map("consent_invitations")
+  consentInvitationsAt     DateTime?       @map("consent_invitations_at") @db.Timestamptz(6)
+  consentResults           ConsentStatus   @default(UNKNOWN) @map("consent_results")
+  consentResultsAt         DateTime?       @map("consent_results_at") @db.Timestamptz(6)
+  isSynthetic              Boolean         @default(false) @map("is_synthetic")
+  archivedAt               DateTime?       @map("archived_at") @db.Timestamptz(6)
+  createdByUserId          String?         @map("created_by_user_id") @db.Uuid
+  importBatchId            String?         @map("import_batch_id") @db.Uuid
+  createdAt                DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization     Organization      @relation(fields: [organizationId], references: [id])
+  consentEvents    ConsentEvent[]
+  groups           ContactGroup[]
+  tags             ContactTag[]
+  recipients       SurveyRecipient[]
+  invitations      Invitation[]
+  participations   Participation[]
+  conversations    Conversation[]
+  actionBindings   ActionBinding[]
+  messages         Message[]
+  resultRecipients ResultRecipient[]
+  importRows       ImportRow[]
+
+  @@unique([organizationId, phoneE164])
+  @@unique([organizationId, id])
+  @@index([organizationId, name])
+  @@index([organizationId, archivedAt])
+  @@index([organizationId, providerIdentity])
+  @@index([organizationId, consentInvitations, archivedAt])
+  @@map("contacts")
+}
+
+model ConsentEvent {
+  id                String           @id @default(uuid()) @db.Uuid
+  organizationId    String           @map("organization_id") @db.Uuid
+  contactId         String           @map("contact_id") @db.Uuid
+  scope             ConsentScope
+  type              ConsentEventType
+  source            ConsentSource
+  evidenceAt        DateTime         @map("evidence_at") @db.Timestamptz(6)
+  recordedAt        DateTime         @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  wordingVersion    String?          @map("wording_version")
+  evidenceReference String?          @map("evidence_reference")
+  actorUserId       String?          @map("actor_user_id") @db.Uuid
+  importBatchId     String?          @map("import_batch_id") @db.Uuid
+  note              String?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  contact      Contact      @relation(fields: [organizationId, contactId], references: [organizationId, id])
+
+  @@index([organizationId, contactId, scope, evidenceAt(sort: Desc), recordedAt(sort: Desc)])
+  @@map("consent_events")
+}
+
+model Group {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String
+  normalizedName String   @map("normalized_name")
+  description    String?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization   @relation(fields: [organizationId], references: [id])
+  contacts     ContactGroup[]
+
+  @@unique([organizationId, normalizedName])
+  @@unique([organizationId, id])
+  @@map("groups")
+}
+
+model Tag {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String
+  normalizedName String   @map("normalized_name")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  contacts     ContactTag[]
+
+  @@unique([organizationId, normalizedName])
+  @@unique([organizationId, id])
+  @@map("tags")
+}
+
+model ContactGroup {
+  organizationId String   @map("organization_id") @db.Uuid
+  contactId      String   @map("contact_id") @db.Uuid
+  groupId        String   @map("group_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  contact      Contact      @relation(fields: [organizationId, contactId], references: [organizationId, id])
+  group        Group        @relation(fields: [organizationId, groupId], references: [organizationId, id])
+
+  @@id([organizationId, contactId, groupId])
+  @@index([organizationId, groupId])
+  @@map("contact_groups")
+}
+
+model ContactTag {
+  organizationId String   @map("organization_id") @db.Uuid
+  contactId      String   @map("contact_id") @db.Uuid
+  tagId          String   @map("tag_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  contact      Contact      @relation(fields: [organizationId, contactId], references: [organizationId, id])
+  tag          Tag          @relation(fields: [organizationId, tagId], references: [organizationId, id])
+
+  @@id([organizationId, contactId, tagId])
+  @@index([organizationId, tagId])
+  @@map("contact_tags")
+}
+
+model Enrollment {
+  id                 String          @id @default(uuid()) @db.Uuid
+  organizationId     String          @map("organization_id") @db.Uuid
+  connectionId       String          @map("connection_id") @db.Uuid
+  senderIdentity     String          @map("sender_identity")
+  state              EnrollmentState
+  proposedName       String?         @map("proposed_name")
+  profileDisplayName String?         @map("profile_display_name")
+  noticeVersion      Int             @map("notice_version")
+  lastInboundAt      DateTime        @map("last_inbound_at") @db.Timestamptz(6)
+  expiresAt          DateTime        @map("expires_at") @db.Timestamptz(6)
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization        @relation(fields: [organizationId], references: [id])
+  connection   MessagingConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id])
+
+  @@unique([organizationId, connectionId, senderIdentity])
+  @@map("enrollments")
+}
+
+// ---------------------------------------------------------------------------
+// Surveys
+// ---------------------------------------------------------------------------
+
+model Survey {
+  id                    String      @id @default(uuid()) @db.Uuid
+  organizationId        String      @map("organization_id") @db.Uuid
+  internalTitle         String      @map("internal_title")
+  state                 SurveyState @default(DRAFT)
+  currentRevisionNumber Int         @default(1) @map("current_revision_number")
+  archivedAt            DateTime?   @map("archived_at") @db.Timestamptz(6)
+  authorUserId          String?     @map("author_user_id") @db.Uuid
+  clonedFromSurveyId    String?     @map("cloned_from_survey_id") @db.Uuid
+  createdAt             DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  revisions    SurveyRevision[]
+  runs         SurveyRun[]
+  snapshots    ResultSnapshot[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, state, archivedAt])
+  @@index([organizationId, updatedAt(sort: Desc)])
+  @@map("surveys")
+}
+
+model SurveyRevision {
+  id                 String    @id @default(uuid()) @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  surveyId           String    @map("survey_id") @db.Uuid
+  revisionNumber     Int       @map("revision_number")
+  frozenAt           DateTime? @map("frozen_at") @db.Timestamptz(6)
+  locale             String    @default("en")
+  title              Json
+  introduction       Json
+  editWindowSeconds  Int       @map("edit_window_seconds")
+  durationSeconds    Int       @map("duration_seconds")
+  explicitClosesAt   DateTime? @map("explicit_closes_at") @db.Timestamptz(6)
+  scheduledOpensAt   DateTime? @map("scheduled_opens_at") @db.Timestamptz(6)
+  audienceDefinition Json      @map("audience_definition")
+  rendererPlan       Json?     @map("renderer_plan")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  survey         Survey          @relation(fields: [organizationId, surveyId], references: [organizationId, id])
+  questions      Question[]
+  runs           SurveyRun[]
+  participations Participation[]
+  answers        Answer[]
+
+  @@unique([organizationId, surveyId, revisionNumber])
+  @@unique([organizationId, id])
+  @@map("survey_revisions")
+}
+
+model Question {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  revisionId     String         @map("revision_id") @db.Uuid
+  position       Int
+  type           QuestionType
+  preset         QuestionPreset @default(CUSTOM)
+  prompt         Json
+  minSelections  Int?           @map("min_selections")
+  maxSelections  Int?           @map("max_selections")
+  ratingMinLabel Json?          @map("rating_min_label")
+  ratingMaxLabel Json?          @map("rating_max_label")
+  renderer       String?
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization    Organization     @relation(fields: [organizationId], references: [id])
+  revision        SurveyRevision   @relation(fields: [organizationId, revisionId], references: [organizationId, id])
+  options         QuestionOption[]
+  answers         Answer[]
+  answerRevisions AnswerRevision[]
+  actionBindings  ActionBinding[]
+
+  @@unique([organizationId, revisionId, position])
+  @@unique([organizationId, id])
+  @@unique([organizationId, revisionId, id])
+  @@map("questions")
+}
+
+model QuestionOption {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  questionId     String   @map("question_id") @db.Uuid
+  code           String
+  position       Int
+  label          Json
+  shortLabel     Json?    @map("short_label")
+  ratingValue    Int?     @map("rating_value")
+  exclusive      Boolean  @default(false)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  question     Question          @relation(fields: [organizationId, questionId], references: [organizationId, id])
+  selections   AnswerSelection[]
+  actions      ActionBinding[]
+
+  @@unique([organizationId, questionId, position])
+  @@unique([organizationId, questionId, code])
+  @@unique([organizationId, questionId, id])
+  @@map("question_options")
+}
+
+model SurveyRun {
+  id                   String    @id @default(uuid()) @db.Uuid
+  organizationId       String    @map("organization_id") @db.Uuid
+  surveyId             String    @map("survey_id") @db.Uuid
+  revisionId           String    @map("revision_id") @db.Uuid
+  kind                 RunKind
+  liveSlot             Int?      @map("live_slot")
+  state                RunState
+  opensAt              DateTime  @map("opens_at") @db.Timestamptz(6)
+  closesAt             DateTime  @map("closes_at") @db.Timestamptz(6)
+  activatedAt          DateTime? @map("activated_at") @db.Timestamptz(6)
+  closedAt             DateTime? @map("closed_at") @db.Timestamptz(6)
+  closeReason          String?   @map("close_reason")
+  audienceDefinition   Json      @map("audience_definition")
+  audienceSummary      Json      @map("audience_summary")
+  launchIdempotencyKey String?   @map("launch_idempotency_key")
+  launchedByUserId     String?   @map("launched_by_user_id") @db.Uuid
+  dispatchBlockReason  String?   @map("dispatch_block_reason")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization   Organization      @relation(fields: [organizationId], references: [id])
+  survey         Survey            @relation(fields: [organizationId, surveyId], references: [organizationId, id])
+  revision       SurveyRevision    @relation(fields: [organizationId, revisionId], references: [organizationId, id])
+  recipients     SurveyRecipient[]
+  invitations    Invitation[]
+  participations Participation[]
+  actionBindings ActionBinding[]
+  messages       Message[]
+  snapshots      ResultSnapshot[]
+
+  @@unique([organizationId, surveyId, liveSlot])
+  @@unique([organizationId, id])
+  @@index([organizationId, state, opensAt])
+  @@index([organizationId, state, closesAt])
+  @@map("survey_runs")
+}
+
+model SurveyRecipient {
+  id               String    @id @default(uuid()) @db.Uuid
+  organizationId   String    @map("organization_id") @db.Uuid
+  runId            String    @map("run_id") @db.Uuid
+  contactId        String    @map("contact_id") @db.Uuid
+  eligibleAtFreeze Boolean   @map("eligible_at_freeze")
+  exclusionReason  String?   @map("exclusion_reason")
+  audienceSnapshot Json      @map("audience_snapshot")
+  suppressedAt     DateTime? @map("suppressed_at") @db.Timestamptz(6)
+  suppressedReason String?   @map("suppressed_reason")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  run          SurveyRun    @relation(fields: [organizationId, runId], references: [organizationId, id])
+  contact      Contact      @relation(fields: [organizationId, contactId], references: [organizationId, id])
+  invitation   Invitation?
+
+  @@unique([organizationId, runId, contactId])
+  @@unique([organizationId, id])
+  @@index([organizationId, contactId])
+  @@map("survey_recipients")
+}
+
+model Invitation {
+  id              String          @id @default(uuid()) @db.Uuid
+  organizationId  String          @map("organization_id") @db.Uuid
+  runId           String          @map("run_id") @db.Uuid
+  recipientId     String          @map("recipient_id") @db.Uuid
+  contactId       String          @map("contact_id") @db.Uuid
+  messageId       String?         @map("message_id") @db.Uuid
+  actionBindingId String?         @map("action_binding_id") @db.Uuid
+  state           InvitationState @default(PENDING)
+  stateReason     String?         @map("state_reason")
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  run          SurveyRun       @relation(fields: [organizationId, runId], references: [organizationId, id])
+  recipient    SurveyRecipient @relation(fields: [organizationId, recipientId], references: [organizationId, id])
+  contact      Contact         @relation(fields: [organizationId, contactId], references: [organizationId, id])
+  message      Message?        @relation(fields: [organizationId, messageId], references: [organizationId, id])
+
+  @@unique([organizationId, recipientId])
+  @@unique([organizationId, id])
+  @@index([organizationId, runId, state])
+  @@map("invitations")
+}
+
+model Participation {
+  id                String             @id @default(uuid()) @db.Uuid
+  organizationId    String             @map("organization_id") @db.Uuid
+  runId             String             @map("run_id") @db.Uuid
+  revisionId        String             @map("revision_id") @db.Uuid
+  contactId         String             @map("contact_id") @db.Uuid
+  state             ParticipationState @default(STARTED)
+  startedAt         DateTime           @map("started_at") @db.Timestamptz(6)
+  completedAt       DateTime?          @map("completed_at") @db.Timestamptz(6)
+  completionAckedAt DateTime?          @map("completion_acked_at") @db.Timestamptz(6)
+  currentQuestionId String?            @map("current_question_id") @db.Uuid
+  analysisProfile   Json?              @map("analysis_profile")
+  analysisProfileAt DateTime?          @map("analysis_profile_at") @db.Timestamptz(6)
+  lastInboundAt     DateTime?          @map("last_inbound_at") @db.Timestamptz(6)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  run          SurveyRun       @relation(fields: [organizationId, runId], references: [organizationId, id])
+  revision     SurveyRevision  @relation(fields: [organizationId, revisionId], references: [organizationId, id])
+  contact      Contact         @relation(fields: [organizationId, contactId], references: [organizationId, id])
+  answers      Answer[]
+  foregroundOf Conversation[]
+  bindings     ActionBinding[]
+  messages     Message[]
+
+  @@unique([organizationId, runId, contactId])
+  @@unique([organizationId, id])
+  @@unique([organizationId, id, revisionId])
+  @@index([organizationId, contactId])
+  @@map("participations")
+}
+
+model Conversation {
+  id                        String            @id @default(uuid()) @db.Uuid
+  organizationId            String            @map("organization_id") @db.Uuid
+  contactId                 String            @map("contact_id") @db.Uuid
+  connectionId              String            @map("connection_id") @db.Uuid
+  foregroundParticipationId String?           @map("foreground_participation_id") @db.Uuid
+  profileOfferState         ProfileOfferState @default(NOT_OFFERED) @map("profile_offer_state")
+  profileOfferedAt          DateTime?         @map("profile_offered_at") @db.Timestamptz(6)
+  lastInboundAt             DateTime?         @map("last_inbound_at") @db.Timestamptz(6)
+  pendingInput              String?           @map("pending_input")
+  pendingContext            Json?             @map("pending_context")
+  controlVersion            Int               @default(0) @map("control_version")
+  createdAt                 DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization  Organization        @relation(fields: [organizationId], references: [id])
+  contact       Contact             @relation(fields: [organizationId, contactId], references: [organizationId, id])
+  connection    MessagingConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id])
+  foreground    Participation?      @relation(fields: [organizationId, foregroundParticipationId], references: [organizationId, id])
+
+  @@unique([organizationId, contactId])
+  @@map("conversations")
+}
+
+// ---------------------------------------------------------------------------
+// Answers
+// ---------------------------------------------------------------------------
+
+model Answer {
+  id                    String    @id @default(uuid()) @db.Uuid
+  organizationId        String    @map("organization_id") @db.Uuid
+  participationId       String    @map("participation_id") @db.Uuid
+  revisionId            String    @map("revision_id") @db.Uuid
+  questionId            String    @map("question_id") @db.Uuid
+  firstAcceptedAt       DateTime  @map("first_accepted_at") @db.Timestamptz(6)
+  editExpiresAt         DateTime  @map("edit_expires_at") @db.Timestamptz(6)
+  currentRevisionNumber Int       @map("current_revision_number")
+  currentProviderAt     DateTime? @map("current_provider_at") @db.Timestamptz(6)
+  currentReceivedAt     DateTime  @map("current_received_at") @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization  Organization     @relation(fields: [organizationId], references: [id])
+  participation Participation    @relation(fields: [organizationId, participationId, revisionId], references: [organizationId, id, revisionId])
+  revision      SurveyRevision   @relation(fields: [organizationId, revisionId], references: [organizationId, id])
+  question      Question         @relation(fields: [organizationId, revisionId, questionId], references: [organizationId, revisionId, id])
+  revisions     AnswerRevision[]
+
+  @@unique([organizationId, participationId, questionId])
+  @@unique([organizationId, id])
+  @@unique([organizationId, id, questionId])
+  @@index([organizationId, questionId])
+  @@map("answers")
+}
+
+model AnswerRevision {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  answerId       String       @map("answer_id") @db.Uuid
+  questionId     String       @map("question_id") @db.Uuid
+  revisionNumber Int          @map("revision_number")
+  acceptedAt     DateTime     @map("accepted_at") @db.Timestamptz(6)
+  providerAt     DateTime?    @map("provider_at") @db.Timestamptz(6)
+  receivedAt     DateTime     @map("received_at") @db.Timestamptz(6)
+  inboundEventId String?      @map("inbound_event_id") @db.Uuid
+  source         AnswerSource
+  ratingValue    Int?         @map("rating_value")
+  isCurrent      Boolean      @default(true) @map("is_current")
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  answer       Answer            @relation(fields: [organizationId, answerId, questionId], references: [organizationId, id, questionId])
+  question     Question          @relation(fields: [organizationId, questionId], references: [organizationId, id])
+  selections   AnswerSelection[]
+
+  @@unique([organizationId, answerId, revisionNumber])
+  @@unique([organizationId, id])
+  @@unique([organizationId, id, questionId])
+  @@index([organizationId, questionId, isCurrent])
+  @@map("answer_revisions")
+}
+
+model AnswerSelection {
+  organizationId   String @map("organization_id") @db.Uuid
+  answerRevisionId String @map("answer_revision_id") @db.Uuid
+  questionId       String @map("question_id") @db.Uuid
+  optionId         String @map("option_id") @db.Uuid
+
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  answerRevision AnswerRevision @relation(fields: [organizationId, answerRevisionId, questionId], references: [organizationId, id, questionId])
+  option         QuestionOption @relation(fields: [organizationId, questionId, optionId], references: [organizationId, questionId, id])
+
+  @@id([organizationId, answerRevisionId, optionId])
+  @@index([organizationId, questionId, optionId])
+  @@map("answer_selections")
+}
+
+// ---------------------------------------------------------------------------
+// Action bindings and messaging
+// ---------------------------------------------------------------------------
+
+model ActionBinding {
+  id              String        @id @default(uuid()) @db.Uuid
+  organizationId  String        @map("organization_id") @db.Uuid
+  token           String        @unique
+  purpose         ActionPurpose
+  mode            ActionMode
+  connectionId    String        @map("connection_id") @db.Uuid
+  contactId       String        @map("contact_id") @db.Uuid
+  runId           String?       @map("run_id") @db.Uuid
+  participationId String?       @map("participation_id") @db.Uuid
+  questionId      String?       @map("question_id") @db.Uuid
+  optionId        String?       @map("option_id") @db.Uuid
+  snapshotId      String?       @map("snapshot_id") @db.Uuid
+  payload         Json?
+  expiresAt       DateTime      @map("expires_at") @db.Timestamptz(6)
+  consumedAt      DateTime?     @map("consumed_at") @db.Timestamptz(6)
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization  Organization        @relation(fields: [organizationId], references: [id])
+  connection    MessagingConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id])
+  contact       Contact             @relation(fields: [organizationId, contactId], references: [organizationId, id])
+  run           SurveyRun?          @relation(fields: [organizationId, runId], references: [organizationId, id])
+  participation Participation?      @relation(fields: [organizationId, participationId], references: [organizationId, id])
+  question      Question?           @relation(fields: [organizationId, questionId], references: [organizationId, id])
+  option        QuestionOption?     @relation(fields: [organizationId, questionId, optionId], references: [organizationId, questionId, id])
+  snapshot      ResultSnapshot?     @relation(fields: [organizationId, snapshotId], references: [organizationId, id])
+
+  @@index([organizationId, contactId, purpose])
+  @@index([expiresAt])
+  @@map("action_bindings")
+}
+
+model MessagingConnection {
+  id                 String            @id @default(uuid()) @db.Uuid
+  organizationId     String            @map("organization_id") @db.Uuid
+  provider           MessagingProvider
+  mode               ConnectionMode
+  appKey             String            @unique @map("app_key")
+  phoneNumberId      String?           @map("phone_number_id")
+  wabaId             String?           @map("waba_id")
+  appId              String?           @map("app_id")
+  displayPhoneNumber String?           @map("display_phone_number")
+  graphVersion       String?           @map("graph_version")
+  appSecretRef       String?           @map("app_secret_ref")
+  accessTokenRef     String?           @map("access_token_ref")
+  verifyTokenRef     String?           @map("verify_token_ref")
+  enabled            Boolean           @default(true)
+  readinessState     String?           @map("readiness_state")
+  readinessDetail    Json?             @map("readiness_detail")
+  lastCheckedAt      DateTime?         @map("last_checked_at") @db.Timestamptz(6)
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization     Organization         @relation(fields: [organizationId], references: [id])
+  templateBindings TemplateBinding[]
+  flowBindings     FlowBinding[]
+  messages         Message[]
+  statusEvents     MessageStatusEvent[]
+  inboundEvents    InboundEvent[]
+  enrollments      Enrollment[]
+  conversations    Conversation[]
+  actionBindings   ActionBinding[]
+
+  @@unique([organizationId, id])
+  @@unique([phoneNumberId])
+  @@map("messaging_connections")
+}
+
+model TemplateBinding {
+  id               String          @id @default(uuid()) @db.Uuid
+  organizationId   String          @map("organization_id") @db.Uuid
+  connectionId     String          @map("connection_id") @db.Uuid
+  purpose          TemplatePurpose
+  providerName     String          @map("provider_name")
+  locale           String          @default("en")
+  category         String?
+  status           TemplateStatus  @default(PENDING)
+  buttonPosition   Int             @default(0) @map("button_position")
+  parameterMapping Json            @map("parameter_mapping")
+  lastCheckedAt    DateTime?       @map("last_checked_at") @db.Timestamptz(6)
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization        @relation(fields: [organizationId], references: [id])
+  connection   MessagingConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id])
+
+  @@unique([organizationId, connectionId, purpose, locale])
+  @@map("template_bindings")
+}
+
+model FlowBinding {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @map("organization_id") @db.Uuid
+  connectionId   String      @map("connection_id") @db.Uuid
+  purpose        FlowPurpose
+  locale         String      @default("en")
+  assetVersion   String      @map("asset_version")
+  providerFlowId String?     @map("provider_flow_id")
+  status         FlowStatus  @default(DRAFT)
+  lastCheckedAt  DateTime?   @map("last_checked_at") @db.Timestamptz(6)
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization        @relation(fields: [organizationId], references: [id])
+  connection   MessagingConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id])
+
+  @@unique([organizationId, connectionId, purpose, locale])
+  @@map("flow_bindings")
+}
+
+model Message {
+  id                String        @id @default(uuid()) @db.Uuid
+  organizationId    String        @map("organization_id") @db.Uuid
+  connectionId      String        @map("connection_id") @db.Uuid
+  contactId         String        @map("contact_id") @db.Uuid
+  runId             String?       @map("run_id") @db.Uuid
+  participationId   String?       @map("participation_id") @db.Uuid
+  snapshotId        String?       @map("snapshot_id") @db.Uuid
+  dedupeKey         String        @unique @map("dedupe_key")
+  kind              MessageKind
+  state             MessageState  @default(PENDING)
+  deliveryState     DeliveryState @default(QUEUED) @map("delivery_state")
+  rendered          Json
+  isFreeForm        Boolean       @default(true) @map("is_free_form")
+  isTest            Boolean       @default(false) @map("is_test")
+  providerMessageId String?       @map("provider_message_id")
+  suppressionReason String?       @map("suppression_reason")
+  lastErrorCode     String?       @map("last_error_code")
+  lastStatusAt      DateTime?     @map("last_status_at") @db.Timestamptz(6)
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization  Organization         @relation(fields: [organizationId], references: [id])
+  connection    MessagingConnection  @relation(fields: [organizationId, connectionId], references: [organizationId, id])
+  contact       Contact              @relation(fields: [organizationId, contactId], references: [organizationId, id])
+  run           SurveyRun?           @relation(fields: [organizationId, runId], references: [organizationId, id])
+  participation Participation?       @relation(fields: [organizationId, participationId], references: [organizationId, id])
+  snapshot      ResultSnapshot?      @relation(fields: [organizationId, snapshotId], references: [organizationId, id])
+  attempts      MessageAttempt[]
+  statusEvents  MessageStatusEvent[]
+  invitations   Invitation[]
+  resultInvites ResultRecipient[]    @relation("ResultInvitationMessage")
+
+  @@unique([organizationId, id])
+  @@index([organizationId, runId, kind])
+  @@index([organizationId, contactId, createdAt(sort: Desc)])
+  @@index([organizationId, connectionId, providerMessageId])
+  @@index([organizationId, state])
+  @@map("messages")
+}
+
+model MessageAttempt {
+  id                 String         @id @default(uuid()) @db.Uuid
+  organizationId     String         @map("organization_id") @db.Uuid
+  messageId          String         @map("message_id") @db.Uuid
+  attemptNumber      Int            @map("attempt_number")
+  startedAt          DateTime       @map("started_at") @db.Timestamptz(6)
+  finishedAt         DateTime?      @map("finished_at") @db.Timestamptz(6)
+  outcome            AttemptOutcome @default(IN_FLIGHT)
+  providerMessageId  String?        @map("provider_message_id")
+  errorCode          String?        @map("error_code")
+  errorDetail        String?        @map("error_detail")
+  retryable          Boolean?
+  authorizedByUserId String?        @map("authorized_by_user_id") @db.Uuid
+  leaseOwner         String?        @map("lease_owner")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  message      Message      @relation(fields: [organizationId, messageId], references: [organizationId, id])
+
+  @@unique([organizationId, messageId, attemptNumber])
+  @@index([organizationId, providerMessageId])
+  @@map("message_attempts")
+}
+
+model MessageStatusEvent {
+  id                String         @id @default(uuid()) @db.Uuid
+  organizationId    String         @map("organization_id") @db.Uuid
+  connectionId      String         @map("connection_id") @db.Uuid
+  providerMessageId String         @map("provider_message_id")
+  messageId         String?        @map("message_id") @db.Uuid
+  status            ProviderStatus
+  providerAt        DateTime       @map("provider_at") @db.Timestamptz(6)
+  receivedAt        DateTime       @default(now()) @map("received_at") @db.Timestamptz(6)
+  errorCode         String?        @map("error_code")
+  errorTitle        String?        @map("error_title")
+  reconciledAt      DateTime?      @map("reconciled_at") @db.Timestamptz(6)
+
+  organization Organization        @relation(fields: [organizationId], references: [id])
+  connection   MessagingConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id])
+  message      Message?            @relation(fields: [organizationId, messageId], references: [organizationId, id])
+
+  @@unique([organizationId, connectionId, providerMessageId, status, providerAt])
+  @@index([organizationId, messageId])
+  @@index([organizationId, reconciledAt])
+  @@map("message_status_events")
+}
+
+model InboundEvent {
+  id                String                 @id @default(uuid()) @db.Uuid
+  organizationId    String                 @map("organization_id") @db.Uuid
+  connectionId      String                 @map("connection_id") @db.Uuid
+  providerMessageId String                 @map("provider_message_id")
+  senderIdentity    String                 @map("sender_identity")
+  senderProfileName String?                @map("sender_profile_name")
+  kind              InboundKind
+  normalized        Json
+  providerAt        DateTime               @map("provider_at") @db.Timestamptz(6)
+  receivedAt        DateTime               @default(now()) @map("received_at") @db.Timestamptz(6)
+  ingressSequence   BigInt                 @default(autoincrement()) @map("ingress_sequence")
+  processingState   InboundProcessingState @default(PENDING) @map("processing_state")
+  processedAt       DateTime?              @map("processed_at") @db.Timestamptz(6)
+  outcomeCode       String?                @map("outcome_code")
+  rawPayload        Json?                  @map("raw_payload")
+  rawExpiresAt      DateTime?              @map("raw_expires_at") @db.Timestamptz(6)
+  isSimulated       Boolean                @default(false) @map("is_simulated")
+
+  organization Organization        @relation(fields: [organizationId], references: [id])
+  connection   MessagingConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id])
+
+  @@unique([organizationId, connectionId, providerMessageId])
+  @@index([organizationId, processingState, receivedAt])
+  @@index([rawExpiresAt])
+  @@map("inbound_events")
+}
+
+model WebhookQuarantine {
+  id            String   @id @default(uuid()) @db.Uuid
+  appKey        String   @map("app_key")
+  reason        String
+  phoneNumberId String?  @map("phone_number_id")
+  rawPayload    Json     @map("raw_payload")
+  receivedAt    DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
+  expiresAt     DateTime @map("expires_at") @db.Timestamptz(6)
+
+  @@index([expiresAt])
+  @@map("webhook_quarantine")
+}
+
+// ---------------------------------------------------------------------------
+// Durable jobs
+// ---------------------------------------------------------------------------
+
+model Job {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  kind           JobKind
+  entityId       String?   @map("entity_id") @db.Uuid
+  dedupeKey      String    @unique @map("dedupe_key")
+  dueAt          DateTime  @map("due_at") @db.Timestamptz(6)
+  priority       Int       @default(50)
+  status         JobStatus @default(PENDING)
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(8) @map("max_attempts")
+  leaseOwner     String?   @map("lease_owner")
+  leaseExpiresAt DateTime? @map("lease_expires_at") @db.Timestamptz(6)
+  lastErrorCode  String?   @map("last_error_code")
+  lastErrorAt    DateTime? @map("last_error_at") @db.Timestamptz(6)
+  payload        Json?
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  finishedAt     DateTime? @map("finished_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([status, dueAt, priority])
+  @@index([status, leaseExpiresAt])
+  @@index([organizationId, kind, entityId])
+  @@map("jobs")
+}
+
+// ---------------------------------------------------------------------------
+// Result sharing
+// ---------------------------------------------------------------------------
+
+model ResultSnapshot {
+  id                  String                 @id @default(uuid()) @db.Uuid
+  organizationId      String                 @map("organization_id") @db.Uuid
+  surveyId            String                 @map("survey_id") @db.Uuid
+  runId               String                 @map("run_id") @db.Uuid
+  formatVersion       Int                    @map("format_version")
+  aggregate           Json
+  generatedAt         DateTime               @map("generated_at") @db.Timestamptz(6)
+  createdByUserId     String                 @map("created_by_user_id") @db.Uuid
+  eligibleCount       Int                    @map("eligible_count")
+  suppressedCount     Int                    @map("suppressed_count")
+  questionsShared     Int                    @map("questions_shared")
+  questionsSuppressed Int                    @map("questions_suppressed")
+  broadcastState      SnapshotBroadcastState @default(PENDING) @map("broadcast_state")
+  idempotencyKey      String?                @map("idempotency_key")
+  revokedAt           DateTime?              @map("revoked_at") @db.Timestamptz(6)
+  revokedByUserId     String?                @map("revoked_by_user_id") @db.Uuid
+  createdAt           DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  survey       Survey            @relation(fields: [organizationId, surveyId], references: [organizationId, id])
+  run          SurveyRun         @relation(fields: [organizationId, runId], references: [organizationId, id])
+  recipients   ResultRecipient[]
+  bindings     ActionBinding[]
+  messages     Message[]
+
+  @@unique([organizationId, runId])
+  @@unique([organizationId, id])
+  @@map("result_snapshots")
+}
+
+model ResultRecipient {
+  id                  String            @id @default(uuid()) @db.Uuid
+  organizationId      String            @map("organization_id") @db.Uuid
+  snapshotId          String            @map("snapshot_id") @db.Uuid
+  contactId           String            @map("contact_id") @db.Uuid
+  invitationMessageId String?           @map("invitation_message_id") @db.Uuid
+  accessState         ResultAccessState @default(PENDING) @map("access_state")
+  suppressionReason   String?           @map("suppression_reason")
+  viewedAt            DateTime?         @map("viewed_at") @db.Timestamptz(6)
+  createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization      Organization   @relation(fields: [organizationId], references: [id])
+  snapshot          ResultSnapshot @relation(fields: [organizationId, snapshotId], references: [organizationId, id])
+  contact           Contact        @relation(fields: [organizationId, contactId], references: [organizationId, id])
+  invitationMessage Message?       @relation("ResultInvitationMessage", fields: [organizationId, invitationMessageId], references: [organizationId, id])
+
+  @@unique([organizationId, snapshotId, contactId])
+  @@map("result_recipients")
+}
+
+// ---------------------------------------------------------------------------
+// Audit, imports, idempotency, local simulator state
+// ---------------------------------------------------------------------------
+
+model AuditEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  actorType      ActorType @map("actor_type")
+  actorUserId    String?   @map("actor_user_id") @db.Uuid
+  action         String
+  resourceType   String    @map("resource_type")
+  resourceId     String?   @map("resource_id")
+  metadata       Json?
+  correlationId  String?   @map("correlation_id")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, resourceType, resourceId])
+  @@index([organizationId, action])
+  @@map("audit_events")
+}
+
+model ImportBatch {
+  id                 String         @id @default(uuid()) @db.Uuid
+  organizationId     String         @map("organization_id") @db.Uuid
+  actorUserId        String         @map("actor_user_id") @db.Uuid
+  fileName           String         @map("file_name")
+  fileType           ImportFileType @map("file_type")
+  fileSize           Int            @map("file_size")
+  sheetNames         Json?          @map("sheet_names")
+  sheetName          String?        @map("sheet_name")
+  headers            Json?
+  columnMapping      Json?          @map("column_mapping")
+  defaultCountry     String         @default("PK") @map("default_country")
+  duplicateMode      DuplicateMode  @default(SKIP_EXISTING) @map("duplicate_mode")
+  consentAttestation Json?          @map("consent_attestation")
+  state              ImportState    @default(UPLOADED)
+  summary            Json?
+  rawBytes           Bytes?         @map("raw_bytes")
+  rawExpiresAt       DateTime       @map("raw_expires_at") @db.Timestamptz(6)
+  stagingPurgedAt    DateTime?      @map("staging_purged_at") @db.Timestamptz(6)
+  previewedAt        DateTime?      @map("previewed_at") @db.Timestamptz(6)
+  confirmedAt        DateTime?      @map("confirmed_at") @db.Timestamptz(6)
+  completedAt        DateTime?      @map("completed_at") @db.Timestamptz(6)
+  errorMessage       String?        @map("error_message")
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  rows         ImportRow[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([rawExpiresAt])
+  @@map("import_batches")
+}
+
+model ImportRow {
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @map("organization_id") @db.Uuid
+  batchId        String          @map("batch_id") @db.Uuid
+  rowNumber      Int             @map("row_number")
+  status         ImportRowStatus
+  errors         Json?
+  normalized     Json?
+  contactId      String?         @map("contact_id") @db.Uuid
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  batch        ImportBatch  @relation(fields: [organizationId, batchId], references: [organizationId, id])
+  contact      Contact?     @relation(fields: [organizationId, contactId], references: [organizationId, id])
+
+  @@unique([organizationId, batchId, rowNumber])
+  @@index([organizationId, batchId, status])
+  @@map("import_rows")
+}
+
+model IdempotencyKey {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  scope          String
+  key            String
+  requestHash    String   @map("request_hash")
+  responseStatus Int?     @map("response_status")
+  responseBody   Json?    @map("response_body")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, scope, key])
+  @@map("idempotency_keys")
+}
+
+model SimulatorState {
+  id                 Int      @id @default(1)
+  clockOffsetSeconds Int      @default(0) @map("clock_offset_seconds")
+  faults             Json     @default("{}")
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("simulator_state")
+}

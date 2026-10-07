@@ -1,0 +1,25 @@
+{
+  "$comment": "Proposal for the results-available notice used only outside the 24-hour customer service window. Submit through WhatsApp Manager or POST /{WABA_ID}/message_templates. Approval and category are decided by Meta.",
+  "purpose": "RESULTS_AVAILABLE",
+  "assetVersion": "results_available.v1",
+  "name": "raaye_results_available",
+  "language": "en",
+  "category": "UTILITY",
+  "allow_category_change": true,
+  "parameter_format": "POSITIONAL",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}} has shared the overall results of the survey \"{{2}}\" that you took part in. Tap View results to receive the summary. Reply STOP to receive no further messages.",
+      "example": { "body_text": [["Public Interest Law Association of Pakistan", "Public transport in Lahore"]] }
+    },
+    {
+      "type": "BUTTONS",
+      "buttons": [{ "type": "QUICK_REPLY", "text": "View results" }]
+    }
+  ],
+  "adapterMapping": {
+    "body": ["organization_name", "survey_title"],
+    "button": { "index": 0, "sub_type": "quick_reply", "payload": "action_token" }
+  }
+}

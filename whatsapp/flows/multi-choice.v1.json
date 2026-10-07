@@ -1,0 +1,118 @@
+{
+  "version": "7.0",
+  "routing_model": {},
+  "screens": [
+    {
+      "id": "QUESTION",
+      "title": "Survey question",
+      "terminal": true,
+      "data": {
+        "prompt": {
+          "type": "string",
+          "__example__": "Which services have you used this year?"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          },
+          "__example__": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "title": "Legal aid",
+              "description": "Free legal advice clinics"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "title": "Workshops",
+              "description": "Community rights workshops"
+            },
+            {
+              "id": "33333333-3333-4333-8333-333333333333",
+              "title": "None of the above",
+              "description": ""
+            }
+          ]
+        },
+        "initial": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "__example__": []
+        },
+        "min": {
+          "type": "number",
+          "__example__": 1
+        },
+        "max": {
+          "type": "number",
+          "__example__": 3
+        },
+        "instruction": {
+          "type": "string",
+          "__example__": "Select between 1 and 3 options"
+        },
+        "action_token": {
+          "type": "string",
+          "__example__": "bound-action-token"
+        },
+        "progress": {
+          "type": "string",
+          "__example__": "Question 3 of 5"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextCaption",
+            "text": "${data.progress}"
+          },
+          {
+            "type": "TextBody",
+            "text": "${data.prompt}"
+          },
+          {
+            "type": "Form",
+            "name": "answer_form",
+            "children": [
+              {
+                "type": "CheckboxGroup",
+                "name": "selected",
+                "label": "${data.instruction}",
+                "required": true,
+                "min-selected-items": "${data.min}",
+                "max-selected-items": "${data.max}",
+                "data-source": "${data.options}",
+                "init-value": "${data.initial}"
+              },
+              {
+                "type": "Footer",
+                "label": "Submit answer",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "action_token": "${data.action_token}",
+                    "selected": "${form.selected}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+name,phone,city,gender,age_band,age,membership
+Valid Person,+923001234601,Lahore,woman,25-34,,member
+,+923001234602,Karachi,man,,,member
+Missing Phone,,Lahore,woman,,,
+Bad Phone,12345,Lahore,woman,,,
+Scientific Phone,9.23001234603E11,Lahore,man,,,
+Conflicting Age,+923001234604,Lahore,man,18-24,45,member
+Invalid Age,+923001234605,Lahore,man,,150,member
+Unknown Gender,+923001234606,Lahore,robot,,,member
+Duplicate In File,+923001234601,Lahore,woman,,,member
+=HYPERLINK("http://evil"),+923001234607,Lahore,woman,,,member

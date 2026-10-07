@@ -1,0 +1,96 @@
+{
+  "version": "7.0",
+  "routing_model": {},
+  "screens": [
+    {
+      "id": "QUESTION",
+      "title": "Survey question",
+      "terminal": true,
+      "data": {
+        "prompt": {
+          "type": "string",
+          "__example__": "Which of these matters most to you?"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          },
+          "__example__": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "title": "Clean water",
+              "description": "Reliable, safe drinking water"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "title": "Public transport",
+              "description": "Affordable buses and trains"
+            }
+          ]
+        },
+        "initial": {
+          "type": "string",
+          "__example__": ""
+        },
+        "action_token": {
+          "type": "string",
+          "__example__": "bound-action-token"
+        },
+        "progress": {
+          "type": "string",
+          "__example__": "Question 2 of 5"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextCaption",
+            "text": "${data.progress}"
+          },
+          {
+            "type": "TextBody",
+            "text": "${data.prompt}"
+          },
+          {
+            "type": "Form",
+            "name": "answer_form",
+            "children": [
+              {
+                "type": "RadioButtonsGroup",
+                "name": "selection",
+                "label": "Choose one option",
+                "required": true,
+                "data-source": "${data.options}",
+                "init-value": "${data.initial}"
+              },
+              {
+                "type": "Footer",
+                "label": "Submit answer",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "action_token": "${data.action_token}",
+                    "selection": "${form.selection}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

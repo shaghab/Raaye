@@ -1,0 +1,232 @@
+{
+  "version": "7.0",
+  "routing_model": {},
+  "screens": [
+    {
+      "id": "PROFILE",
+      "title": "Optional details",
+      "terminal": true,
+      "data": {
+        "intro": {
+          "type": "string",
+          "__example__": "Every field is optional. Leave anything blank."
+        },
+        "action_token": {
+          "type": "string",
+          "__example__": "bound-action-token"
+        },
+        "city": {
+          "type": "string",
+          "__example__": ""
+        },
+        "district": {
+          "type": "string",
+          "__example__": ""
+        },
+        "occupation": {
+          "type": "string",
+          "__example__": ""
+        },
+        "gender": {
+          "type": "string",
+          "__example__": ""
+        },
+        "age_band": {
+          "type": "string",
+          "__example__": ""
+        },
+        "membership": {
+          "type": "string",
+          "__example__": ""
+        },
+        "genders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            }
+          },
+          "__example__": [
+            {
+              "id": "WOMAN",
+              "title": "Woman"
+            },
+            {
+              "id": "MAN",
+              "title": "Man"
+            },
+            {
+              "id": "ANOTHER_IDENTITY",
+              "title": "Another identity"
+            },
+            {
+              "id": "PREFER_NOT_TO_SAY",
+              "title": "Prefer not to say"
+            }
+          ]
+        },
+        "age_bands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            }
+          },
+          "__example__": [
+            {
+              "id": "UNDER_18",
+              "title": "Under 18"
+            },
+            {
+              "id": "AGE_18_24",
+              "title": "18-24"
+            },
+            {
+              "id": "AGE_25_34",
+              "title": "25-34"
+            },
+            {
+              "id": "AGE_35_44",
+              "title": "35-44"
+            },
+            {
+              "id": "AGE_45_54",
+              "title": "45-54"
+            },
+            {
+              "id": "AGE_55_64",
+              "title": "55-64"
+            },
+            {
+              "id": "AGE_65_PLUS",
+              "title": "65+"
+            },
+            {
+              "id": "PREFER_NOT_TO_SAY",
+              "title": "Prefer not to say"
+            }
+          ]
+        },
+        "memberships": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            }
+          },
+          "__example__": [
+            {
+              "id": "MEMBER",
+              "title": "Member"
+            },
+            {
+              "id": "NON_MEMBER",
+              "title": "Not a member"
+            },
+            {
+              "id": "UNKNOWN",
+              "title": "Not sure"
+            }
+          ]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextBody",
+            "text": "${data.intro}"
+          },
+          {
+            "type": "Form",
+            "name": "profile_form",
+            "children": [
+              {
+                "type": "TextInput",
+                "name": "city",
+                "label": "City",
+                "required": false,
+                "input-type": "text",
+                "init-value": "${data.city}"
+              },
+              {
+                "type": "TextInput",
+                "name": "district",
+                "label": "District",
+                "required": false,
+                "input-type": "text",
+                "init-value": "${data.district}"
+              },
+              {
+                "type": "Dropdown",
+                "name": "gender",
+                "label": "Gender",
+                "required": false,
+                "data-source": "${data.genders}",
+                "init-value": "${data.gender}"
+              },
+              {
+                "type": "Dropdown",
+                "name": "age_band",
+                "label": "Age band",
+                "required": false,
+                "data-source": "${data.age_bands}",
+                "init-value": "${data.age_band}"
+              },
+              {
+                "type": "TextInput",
+                "name": "occupation",
+                "label": "Occupation",
+                "required": false,
+                "input-type": "text",
+                "init-value": "${data.occupation}"
+              },
+              {
+                "type": "Dropdown",
+                "name": "membership",
+                "label": "Membership",
+                "required": false,
+                "data-source": "${data.memberships}",
+                "init-value": "${data.membership}"
+              },
+              {
+                "type": "Footer",
+                "label": "Save",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "action_token": "${data.action_token}",
+                    "city": "${form.city}",
+                    "district": "${form.district}",
+                    "gender": "${form.gender}",
+                    "age_band": "${form.age_band}",
+                    "occupation": "${form.occupation}",
+                    "membership": "${form.membership}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
