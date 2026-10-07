@@ -103,9 +103,17 @@ describe('contacts, consent and imports (R10-R14, R50)', () => {
       .send({ scopes: ['SURVEY_INVITATIONS'], type: 'GRANTED', evidenceAt: '2026-09-01T10:00:00Z', evidenceReference: 'Form' })
       .expect(201);
     await request(t.server).patch(`/api/v1/contacts/${contact.id}`).set('Authorization', manager.authorization).send({ phone: '+923001234581' }).expect(400);
+    // The old number wrote to the organization moments ago: an open service window and a pending prompt.
+    const connection = await t.prisma.messagingConnection.findFirstOrThrow({ where: { organizationId: orgId } });
+    await t.prisma.conversation.create({ data: { organizationId: orgId, contactId: contact.id, connectionId: connection.id, lastInboundAt: t.clock.now(), pendingInput: 'EDIT_PICK', pendingContext: { questionIds: [] } } });
     const changed = (await request(t.server).patch(`/api/v1/contacts/${contact.id}`).set('Authorization', manager.authorization).send({ phone: '+923001234581', confirmPhoneChange: true }).expect(200)).body;
     expect(changed.phoneE164).toBe('+923001234581');
     expect(changed.consent.invitations).toBe('UNKNOWN');
+    const conversation = await t.prisma.conversation.findUniqueOrThrow({ where: { organizationId_contactId: { organizationId: orgId, contactId: contact.id } } });
+    expect(conversation.lastInboundAt).toBeNull();
+    expect(conversation.foregroundParticipationId).toBeNull();
+    expect(conversation.pendingInput).toBeNull();
+    expect(conversation.pendingContext).toBeNull();
   });
 
   it('filters, searches, paginates and archives contacts; archived contacts leave the default list', async () => {

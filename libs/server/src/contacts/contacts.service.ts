@@ -13,7 +13,7 @@ import { CLOCK } from '../clock/clock.service';
 import type { TenantContext } from '../common/context';
 import { DomainError, invalid, notFound } from '../common/errors';
 import { isUniqueViolation } from '../persistence/db-errors';
-import { asJson } from '../persistence/json';
+import { asJson, asJsonOrNull } from '../persistence/json';
 import type { Prisma } from '../persistence/prisma.service';
 import { TenantDbFactory } from '../persistence/tenant-db.factory';
 import type { TenantTx } from '../persistence/tenant-db';
@@ -238,6 +238,9 @@ export class ContactsService {
           data.providerIdentity = null;
           changed.push('phone');
           await cancelPendingOutreach(tx, id, 'PHONE_CHANGED', now);
+          // The new number has never written to the organization: no open service window,
+          // no survey in the foreground, no pending prompt carried over from the old number.
+          await tx.conversation.updateMany({ where: { contactId: id }, data: { lastInboundAt: null, foregroundParticipationId: null, pendingInput: null, pendingContext: asJsonOrNull(null) } });
           await this.consent.applyEvents(
             tx,
             id,
