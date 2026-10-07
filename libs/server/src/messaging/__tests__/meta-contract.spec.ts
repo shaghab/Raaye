@@ -165,4 +165,16 @@ describe('Meta send payloads and error classification', () => {
     const refused = new MetaMessagingProvider(liveConfig(), { fetch: async () => { throw new Error('connect ECONNREFUSED'); } });
     expect(await refused.send({ connection: { id: 'c', phoneNumberId: '111', graphVersion: null, appKey: 'k' }, to: '1', message: { type: 'text', body: 'Hi' }, messageId: 'm4', contactId: 'contact-1', attemptNumber: 1, isTest: false })).toMatchObject({ outcome: 'FAILED', errorCode: 'NETWORK', retryable: true });
   });
+
+  it('treats a connection reset after the request was attempted as an ambiguous send (R43)', async () => {
+    const request = { connection: { id: 'c', phoneNumberId: '111', graphVersion: null, appKey: 'k' }, to: '1', message: { type: 'text' as const, body: 'Hi' }, messageId: 'm5', contactId: 'contact-1', attemptNumber: 1, isTest: false };
+    for (const detail of ['fetch failed: read ECONNRESET', 'socket hang up', 'write EPIPE', 'other side closed']) {
+      const reset = new MetaMessagingProvider(liveConfig(), { fetch: async () => { throw new Error(detail); } });
+      expect(await reset.send(request)).toMatchObject({ outcome: 'UNKNOWN', errorCode: 'NETWORK_AFTER_SEND' });
+    }
+    for (const detail of ['getaddrinfo ENOTFOUND graph.facebook.com', 'getaddrinfo EAI_AGAIN graph.facebook.com', 'unable to verify the first certificate']) {
+      const unreachable = new MetaMessagingProvider(liveConfig(), { fetch: async () => { throw new Error(detail); } });
+      expect(await unreachable.send(request)).toMatchObject({ outcome: 'FAILED', errorCode: 'NETWORK', retryable: true });
+    }
+  });
 });

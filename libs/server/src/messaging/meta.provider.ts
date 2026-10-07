@@ -94,7 +94,12 @@ export class MetaMessagingProvider implements ProviderAdapter {
       if (name === 'AbortError' || /timeout/i.test(message)) {
         return { outcome: 'UNKNOWN', errorCode: 'TIMEOUT', detail: 'No response before the timeout; the provider may have accepted the message' };
       }
-      if (!transmitted || /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|certificate|TLS|ECONNRESET/i.test(message)) {
+      // Only failures that provably happened before any bytes reached Meta are safe to retry
+      // automatically (connection refused, DNS, TLS handshake). A reset or hang-up after the
+      // request was attempted may follow an accepted message, so it takes the ambiguous path
+      // and needs an explicit, acknowledged retry.
+      const beforeConnection = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|certificate|TLS|SSL|CERT_/i.test(message);
+      if (!transmitted || beforeConnection) {
         return { outcome: 'FAILED', errorCode: 'NETWORK', retryable: true, detail: message.slice(0, 200) };
       }
       return { outcome: 'UNKNOWN', errorCode: 'NETWORK_AFTER_SEND', detail: message.slice(0, 200) };
