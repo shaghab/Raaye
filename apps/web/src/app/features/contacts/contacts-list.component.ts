@@ -7,7 +7,7 @@ import { MatMenuModule } from '@angular/material/menu';
 import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { CONSENT_STATUSES, type ContactSummaryDto, type GroupDto, type Page, type TagDto } from '@raaye/contracts';
 import { ApiError, ApiService, type Query } from '../../core/api.service';
 import { NotifyService } from '../../core/notify.service';
@@ -89,6 +89,7 @@ import { SHARED } from '../../shared/ui';
 export class ContactsListComponent {
   private readonly api = inject(ApiService);
   private readonly notify = inject(NotifyService);
+  private readonly route = inject(ActivatedRoute);
   readonly consentStatuses = CONSENT_STATUSES;
   readonly columns = ['name', 'phone', 'location', 'invitations', 'results', 'groups', 'membership'];
   readonly page = signal<Page<ContactSummaryDto> | null>(null);
@@ -105,6 +106,18 @@ export class ContactsListComponent {
   offset = 0;
 
   constructor() {
+    // Filters given in the URL seed the controls, so a link can open a filtered view instead of the first
+    // unfiltered page. The keys are the contact query contract's (`search`, `consentStatus`, `groupId`,
+    // `tagId`, `archived`), the same ones the group and tag links emit.
+    const params = this.route.snapshot.queryParamMap;
+    this.search = params.get('search') ?? '';
+    this.consentStatus = params
+      .getAll('consentStatus')
+      .flatMap((value) => value.split(','))
+      .filter((status) => (CONSENT_STATUSES as readonly string[]).includes(status));
+    this.groupId = params.get('groupId');
+    this.tagId = params.get('tagId');
+    this.archived = params.get('archived') === 'true';
     void this.load();
     void this.loadGroupsTags();
   }

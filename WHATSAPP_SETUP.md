@@ -32,7 +32,7 @@ META_WEBHOOK_APP_KEY=<random URL-safe key>
 
 Configuration validation fails closed: live mode with an emulator host, the simulator enabled, demo bootstrap, a short internal task token, or any missing `META_*` value stops the process with a readable reason. There is no fallback to mock mode.
 
-In the dashboard (Admin) open **Settings → Messaging** and enter the non-secret identifiers plus the **names of the environment variables** holding the secrets (`appSecretRef`, `accessTokenRef`, `verifyTokenRef`). The readiness panel shows blockers until everything is bound. The first save creates the organization's live sender (provider META, app key `live-<organization-slug>-<random>`), so a deployment that only ran `migrate deploy` needs no seed or database edit; the webhook path shown in the Status card is final after that save.
+In the dashboard (Admin) open **Settings → Messaging** and enter the non-secret identifiers plus the **names of the environment variables** holding the secrets (`appSecretRef`, `accessTokenRef`, `verifyTokenRef`). The readiness panel shows blockers until everything is bound and resolves; a reference that does not resolve also makes the webhook route refuse that connection's traffic rather than fall back to the process-wide `META_APP_SECRET` / `META_WEBHOOK_VERIFY_TOKEN`, which apply only to a connection with no reference bound. The first save creates the organization's live sender (provider META, app key `live-<organization-slug>-<random>`), so a deployment that only ran `migrate deploy` needs no seed or database edit; the webhook path shown in the Status card is final after that save.
 
 ## 3. Webhook
 

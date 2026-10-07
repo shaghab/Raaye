@@ -1,0 +1,229 @@
+{
+  "branch": "claude/great-ptolemy-ro6mqe",
+  "pullRequest": {
+    "number": 22,
+    "url": "https://github.com/shaghab/Raaye/pull/22",
+    "base": "main",
+    "closes": [
+      10,
+      16,
+      21
+    ]
+  },
+  "reviewRequests": [
+    {
+      "round": 1,
+      "headSha": "a7d23be",
+      "requestedAt": "2026-10-07T17:32:57.072889+00:00",
+      "status": "completed",
+      "trigger": "pull request opened (Codex reviews new pull requests automatically)",
+      "reviewedAt": "2026-10-07T17:36:34Z",
+      "findings": 2,
+      "outcome": "2 P2 findings, both regressions introduced by this pull request, fixed"
+    },
+    {
+      "round": 2,
+      "headSha": "97a9af9",
+      "requestedAt": "2026-10-07T17:44:09.124096+00:00",
+      "status": "completed",
+      "requestCommentId": 6043491369,
+      "reviewedAt": "2026-10-07T17:46:24Z",
+      "findings": 1,
+      "outcome": "1 P1 finding, fixed"
+    },
+    {
+      "round": 3,
+      "headSha": "af135ce",
+      "requestedAt": "2026-10-07T17:50:35.640365+00:00",
+      "status": "completed",
+      "requestCommentId": 6043600022,
+      "reviewedAt": "2026-10-07T17:53:10Z",
+      "findings": 1,
+      "outcome": "1 P1 finding, fixed"
+    },
+    {
+      "round": 4,
+      "headSha": "44492db",
+      "requestedAt": "2026-10-07T17:56:41.372871+00:00",
+      "status": "completed",
+      "requestCommentId": 6043701926,
+      "reviewCommentId": 6043750602,
+      "reviewedAt": "2026-10-07T17:59:27Z",
+      "findings": 0,
+      "outcome": "no findings"
+    },
+    {
+      "round": 5,
+      "headSha": "aed9134",
+      "requestedAt": "2026-10-07T18:09:51.685633+00:00",
+      "status": "completed",
+      "note": "contacts list seeds filters from the URL (Playwright journey fix)",
+      "reviewedAt": "2026-10-07T18:12:04Z",
+      "findings": 1,
+      "outcome": "1 P2 finding on the new initializer (query keys), fixed"
+    },
+    {
+      "round": 6,
+      "headSha": "1ef21b4",
+      "requestedAt": "2026-10-07T18:15:49.000104+00:00",
+      "status": "completed",
+      "reviewedAt": "2026-10-07T18:19:48Z",
+      "findings": 2,
+      "outcome": "1 P1 and 1 P2, both on code introduced by this pull request, fixed"
+    },
+    {
+      "round": 7,
+      "headSha": "0623b73",
+      "requestedAt": "2026-10-07T18:23:40.583220+00:00",
+      "status": "completed",
+      "requestCommentId": 6044155453,
+      "reviewedAt": "2026-10-07T18:27:07Z",
+      "findings": 1,
+      "outcome": "1 P1 finding, fixed"
+    },
+    {
+      "round": 8,
+      "headSha": "cd6850a",
+      "requestedAt": "2026-10-07T18:31:47.158185+00:00",
+      "status": "completed",
+      "requestCommentId": 6044289775,
+      "reviewedAt": "2026-10-07T18:35:02Z",
+      "findings": 1,
+      "outcome": "1 P1 finding, fixed by removing the account deletion"
+    },
+    {
+      "round": 9,
+      "headSha": "7170e78",
+      "requestedAt": "2026-10-07T18:41:20.804945+00:00",
+      "status": "completed",
+      "requestCommentId": 6044450786,
+      "reviewedAt": "2026-10-07T18:46:00Z",
+      "findings": 1,
+      "outcome": "1 P2 finding (pre-existing wait point), tracked"
+    }
+  ],
+  "processedFindings": [
+    {
+      "commentId": 4210009254,
+      "threadId": "PRRT_kwDOU--Sjc6qBZFG",
+      "priority": "P2",
+      "file": "libs/server/src/surveys/visibility.ts",
+      "title": "Filter drafts from the Viewer overview",
+      "action": "fixed",
+      "reason": "regression: Viewer overview links to drafts now answer 404",
+      "commit": "7b3d8e3",
+      "resolved": true,
+      "replyCommentId": 4210079277
+    },
+    {
+      "commentId": 4210009260,
+      "threadId": "PRRT_kwDOU--Sjc6qBZFJ",
+      "priority": "P2",
+      "file": "libs/server/src/organizations/organization.service.ts",
+      "title": "Avoid provisioning an account before the post-lock expiry check",
+      "action": "fixed",
+      "reason": "regression: the post-lock expiry refusal can now orphan a Firebase account created earlier in the request",
+      "commit": "97a9af9",
+      "resolved": true,
+      "replyCommentId": 4210080047
+    },
+    {
+      "commentId": 4210104094,
+      "threadId": "PRRT_kwDOU--Sjc6qBnyg",
+      "priority": "P1",
+      "file": "libs/server/src/organizations/organization.service.ts",
+      "title": "Avoid deleting the user after an ambiguous database commit",
+      "action": "fixed",
+      "commit": "af135ce",
+      "resolved": true,
+      "replyCommentId": 4210139672
+    },
+    {
+      "commentId": 4210166178,
+      "threadId": "PRRT_kwDOU--Sjc6qBxcI",
+      "priority": "P1",
+      "file": "libs/server/src/organizations/organization.service.ts",
+      "title": "Wait for commit resolution before deleting the Firebase user",
+      "action": "fixed",
+      "commit": "44492db",
+      "resolved": true,
+      "replyCommentId": 4210196437
+    },
+    {
+      "commentId": 4210342226,
+      "threadId": "PRRT_kwDOU--Sjc6qCMia",
+      "priority": "P2",
+      "file": "apps/web/src/app/features/contacts/contacts-list.component.ts",
+      "title": "Read the query keys emitted by contact links",
+      "action": "fixed",
+      "reason": "defect in code introduced by this pull request (aed9134)",
+      "commit": "1ef21b4",
+      "resolved": true
+    },
+    {
+      "commentId": 4210414047,
+      "threadId": "PRRT_kwDOU--Sjc6qCXwd",
+      "priority": "P1",
+      "file": "libs/server/src/organizations/organization.service.ts",
+      "title": "Recheck whether the created identity gained another membership",
+      "action": "fixed",
+      "commit": "3026fab",
+      "resolved": true,
+      "replyCommentId": 4210451895
+    },
+    {
+      "commentId": 4210414055,
+      "threadId": "PRRT_kwDOU--Sjc6qCXwj",
+      "priority": "P2",
+      "file": "libs/server/src/reporting/reporting.service.ts",
+      "title": "Filter draft test-run blockers from the Viewer overview",
+      "action": "fixed",
+      "reason": "defect in the overview predicate introduced by this pull request (7b3d8e3)",
+      "commit": "0623b73",
+      "resolved": true,
+      "replyCommentId": 4210452524
+    },
+    {
+      "commentId": 4210487665,
+      "threadId": "PRRT_kwDOU--Sjc6qCjDR",
+      "priority": "P1",
+      "file": "libs/server/src/organizations/organization.service.ts",
+      "title": "Lock concurrent acceptances before deleting the Firebase identity",
+      "action": "fixed",
+      "commit": "cd6850a",
+      "resolved": true,
+      "replyCommentId": 4210529505
+    },
+    {
+      "commentId": 4210562824,
+      "threadId": "PRRT_kwDOU--Sjc6qCumG",
+      "priority": "P1",
+      "file": "libs/server/src/organizations/organization.service.ts",
+      "title": "Keep identity serialization through account deletion",
+      "action": "fixed",
+      "commit": "7170e78",
+      "resolved": true,
+      "replyCommentId": 4210619541
+    },
+    {
+      "commentId": 4210668815,
+      "threadId": "PRRT_kwDOU--Sjc6qC-_L",
+      "priority": "P2",
+      "file": "libs/server/src/organizations/organization.service.ts",
+      "title": "Recheck expiry after the identity upsert wait",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/23",
+      "resolved": true
+    }
+  ],
+  "issues": [
+    {
+      "number": 23,
+      "url": "https://github.com/shaghab/Raaye/issues/23",
+      "title": "Invitation acceptance should recheck expiry after waiting on the shared user row",
+      "priority": "P2"
+    }
+  ],
+  "blockers": [],
+  "updatedAt": "2026-10-07T18:50:22.180112+00:00"
+}

@@ -15,6 +15,7 @@ import { AuditService } from '../audit/audit.service';
 import { FirebaseAdminService, type VerifiedIdentity } from '../auth/token-verifier';
 import { CLOCK } from '../clock/clock.service';
 import { DomainError, notFound } from '../common/errors';
+import { getLogger } from '../observability/logger';
 import type { TenantContext } from '../common/context';
 import { APP_CONFIG, type AppConfig } from '../config/env';
 import { PrismaService, type Organization } from '../persistence/prisma.service';
@@ -42,6 +43,8 @@ export function toOrganizationDto(org: Organization): OrganizationDto {
 
 @Injectable()
 export class OrganizationService {
+  private readonly logger = getLogger('organizations');
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly dbFactory: TenantDbFactory,
@@ -223,6 +226,7 @@ export class OrganizationService {
     const invitation = await this.loadValidInvitation(input.token);
     const email = invitation.email;
     let firebaseUid: string;
+    let createdUid: string | null = null;
     if (identity) {
       if (identity.email !== email) throw new DomainError('INVITATION_EMAIL_MISMATCH', 'Sign in with the invited email address');
       firebaseUid = identity.uid;
@@ -231,13 +235,37 @@ export class OrganizationService {
       if (existingUid) throw new DomainError('INVITATION_INVALID', 'An account already exists for this email; sign in first, then accept the invitation');
       if (!input.password) throw new DomainError('VALIDATION_FAILED', 'Choose a password to create your account', undefined, [{ path: 'password', message: 'Required' }]);
       firebaseUid = await this.firebase.createUser(email, input.password, input.displayName);
+      createdUid = firebaseUid;
     }
-    const now = this.clock.now();
+    try {
+      await this.consumeInvitation(invitation, firebaseUid, input.displayName, correlationId);
+    } catch (error) {
+      // A failure may hide a commit whose acknowledgement was lost, so the authoritative rows decide
+      // whether the acceptance persisted. An account created for a refused acceptance is kept: removing
+      // it cannot be made safe against a concurrent acceptance by the same identity, and it grants nothing
+      // without a membership. The refusal tells the invitee that the account exists and how to proceed.
+      if (await this.acceptancePersisted(invitation.id, firebaseUid)) {
+        this.logger.warn({ invitationId: invitation.id }, 'Invitation acceptance was persisted although its transaction reported an error');
+        return { email };
+      }
+      if (createdUid && error instanceof DomainError && error.code === 'INVITATION_INVALID') {
+        throw new DomainError('INVITATION_INVALID', 'This invitation is no longer valid. Your account was created with the password you chose; ask an Admin for a new invitation and accept it after signing in.', { accountCreated: true });
+      }
+      throw error;
+    }
+    return { email };
+  }
+
+  private async consumeInvitation(invitation: { id: string; organizationId: string; email: string; role: 'ADMIN' | 'SURVEY_MANAGER' | 'VIEWER' }, firebaseUid: string, displayName: string | undefined, correlationId: string): Promise<void> {
+    const email = invitation.email;
     await this.prisma.$transaction(async (tx) => {
       // The organization row lock serializes acceptance with bootstrap re-runs and member administration:
       // a re-run's active-Admin count and the membership created here cannot interleave, and both paths
       // take the organization lock before touching invitations, so they never deadlock on each other.
       await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${invitation.organizationId}::uuid FOR UPDATE`;
+      // The deadline is judged on a clock reading taken after the lock wait, so an invitation that expired
+      // while this request waited is refused and `acceptedAt` never predates the wait.
+      const now = this.clock.now();
       const consumed = await tx.staffInvitation.updateMany({
         where: { id: invitation.id, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
         data: { acceptedAt: now },
@@ -245,8 +273,8 @@ export class OrganizationService {
       if (consumed.count !== 1) throw new DomainError('INVITATION_INVALID', 'This invitation is no longer valid');
       const user = await tx.user.upsert({
         where: { firebaseUid },
-        create: { firebaseUid, email, displayName: input.displayName ?? null },
-        update: { email, displayName: input.displayName ?? undefined },
+        create: { firebaseUid, email, displayName: displayName ?? null },
+        update: { email, displayName: displayName ?? undefined },
       });
       await tx.staffInvitation.update({ where: { id: invitation.id }, data: { acceptedByUserId: user.id } });
       await tx.organizationMembership.upsert({
@@ -267,7 +295,25 @@ export class OrganizationService {
         },
       });
     });
-    return { email };
+  }
+
+  /**
+   * Whether a failed acceptance transaction nevertheless persisted (a commit whose acknowledgement was
+   * lost). The rows are read only after a lock on the invitation row has waited for the failed
+   * transaction to finish resolving; an unreachable database counts as not persisted.
+   */
+  private async acceptancePersisted(invitationId: string, firebaseUid: string): Promise<boolean> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM staff_invitations WHERE id = ${invitationId}::uuid FOR UPDATE`;
+        const user = await tx.user.findUnique({ where: { firebaseUid }, select: { id: true } });
+        if (!user) return false;
+        const invitation = await tx.staffInvitation.findUnique({ where: { id: invitationId }, select: { acceptedByUserId: true } });
+        return invitation?.acceptedByUserId === user.id;
+      });
+    } catch {
+      return false;
+    }
   }
 
   private async loadValidInvitation(token: string) {

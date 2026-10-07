@@ -3,7 +3,7 @@
 ## Identity and roles
 
 - Staff sign in with Firebase email/password; the API verifies ID tokens (emulator locally, live project in production). There is no self-registration: Admins create single-use, 72-hour, hashed invitation links bound to an email address.
-- Roles per `MVP.md`: **Admin** (everything, including identifiable answers, exports, sharing, staff, messaging configuration, timing defaults), **Survey Manager** (contacts, imports, surveys, dispatch, aggregates; never identifiable answers or Admin-only settings), **Viewer** (aggregates and aggregate exports only). Field-level permissions are enforced server-side; Managers cannot change duration or edit-window settings through the survey update DTO.
+- Roles per `MVP.md`: **Admin** (everything, including identifiable answers, exports, sharing, staff, messaging configuration, timing defaults), **Survey Manager** (contacts, imports, surveys, dispatch, aggregates; never identifiable answers or Admin-only settings), **Viewer** (aggregates and aggregate exports only). Field-level permissions are enforced server-side; Managers cannot change duration or edit-window settings through the survey update DTO. Viewers see published surveys only: drafts are absent from their list and overview, and a draft read by id is reported as not found.
 - Membership revocation takes effect on the next request; the last Admin cannot be demoted or removed.
 
 ## Tenant isolation
@@ -23,7 +23,7 @@
 
 ## Messaging and webhooks
 
-- Webhook signatures are verified over the exact raw request bytes with a timing-safe comparison before anything is written. Unknown sender connections are quarantined without touching any organization, and so is traffic for a connection an Admin disabled; the send policy refuses to use a disabled sender.
+- Webhook signatures are verified over the exact raw request bytes with a timing-safe comparison before anything is written. Unknown sender connections are quarantined without touching any organization, and so is traffic for a connection an Admin disabled; the send policy refuses to use a disabled sender. A connection whose bound secret reference does not resolve is refused outright; the process-wide `META_APP_SECRET` and `META_WEBHOOK_VERIFY_TOKEN` apply only to a connection that binds no reference.
 - Action tokens are opaque, bound to connection + contact + participation + question, and expire. A reply is attached only where its binding says; never "the most recent survey".
 - Synthetic (seeded) contacts can never be sent to a live provider. Live configuration refuses emulator flags, simulator routes, demo bootstrap and weak internal tokens, and never falls back to mock.
 - The first organization and Admin of a live deployment come from the operator command `bootstrap:org`, which needs database access, issues a single-use 72-hour Admin invitation, refuses once an active Admin exists, writes an audit event and prints the acceptance link once to stdout (never to the structured log). Every later membership comes from an Admin invitation.

@@ -163,3 +163,34 @@ Not run: nothing in this change touches the Meta adapter, Cloud Tasks or the das
 | 3 | c90ff93 | P2: the acceptance compares expiry against a clock reading taken before the lock wait. Tracked as issue #21, not implemented. |
 
 All three review threads are resolved. After the fixes, on the tree of c90ff93: `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 68, integration 12 suites / 74 tests, WhatsApp assets 8 checks, production builds); `pnpm test:e2e` passed (9 journeys). The commit that records this outcome changes only `plan/` files and was not sent for a further round.
+
+## Follow-up: webhook secrets, Viewer drafts and invitation expiry (issues #10, #16, #21)
+
+Branch restarted from the merged `main` (dbfdc6f). Checks run on the working tree that became this pull request:
+
+| Check | Result |
+| --- | --- |
+| `pnpm verify` | passed: lint 7 projects, strict typecheck 7 projects, unit tests 70, integration 13 suites / 79 tests, WhatsApp assets 8 checks, production builds |
+| `pnpm test:e2e` | passed: 9 Playwright journeys |
+| New unit coverage | `libs/server/src/messaging/__tests__/secrets.spec.ts`: reference resolution and the fail-closed lookup |
+| New integration coverage | `webhook-secrets.int-spec.ts` (process-wide secrets only without a bound reference; bound references never accept the process-wide values; an unresolved reference refuses verification and delivery and writes nothing; a repaired reference restores the connection); `surveys-launch.int-spec.ts` "Viewers never see draft surveys, in the list or by id" (list, `state=DRAFT`, archived drafts, detail, preview, results, breakdowns; Admin and Survey Manager unaffected); `reporting.int-spec.ts` adjusted so the unlaunched-survey results read is a Survey Manager's and a Viewer gets not-found; `auth-membership.int-spec.ts` "an invitation that expires while its acceptance waits for the organization lock is refused" (lock held by another transaction, injected clock advanced past expiry while the acceptance waits on `pg_stat_activity`, `INVITATION_INVALID`, no membership) |
+
+Not run: nothing in this change touches the Meta adapter's outbound path, Cloud Tasks or Docker assets; live Meta and GCP verification remain external as before.
+
+## Review loop for pull request #22 (webhook secrets, Viewer drafts, invitation expiry)
+
+| Round | Commit | Outcome |
+| --- | --- | --- |
+| 1 (pull request opened) | a7d23be | Two P2 findings, both on behaviour this change would have introduced, fixed here: the Viewer overview still listed drafts whose links now answer not-found (7b3d8e3), and a password-based acceptance refused after the new post-lock expiry check left an orphan Firebase account (97a9af9 deleted the account). |
+| 2 | 97a9af9 | P1: a transaction error can hide a commit whose acknowledgement was lost, so deleting the account could strand a persisted membership. af135ce reconciled against the database first. |
+| 3 | af135ce | P1: the reconciliation read ran at once and unlocked. 44492db locked the invitation row first so the failed transaction resolves before the read. |
+| 4 | 44492db | No findings. |
+| 5 | aed9134 | P2 on the new contacts deep-link initializer: it read query keys the existing group and tag links do not emit. 1ef21b4 reads the contact query contract's keys. |
+| 6 | 1ef21b4 | P1: a second acceptance by the same fresh identity could store its user row after the reference check, then lose the identity (3026fab checked references first). P2: the overview's blocked-run list still named drafts (0623b73 applies the Viewer predicate there, with a test that blocks a draft's test run). |
+| 7 | 0623b73 | P1: the reference check was a snapshot; cd6850a serialized acceptances per identity with an advisory lock. |
+| 8 | cd6850a | P1: the lock ended before the deletion. 7170e78 removes the deletion altogether: an account created for a refused acceptance is kept, the refusal says so, and only the reconciliation that returns a persisted acceptance as a success remains. |
+| 9 | 7170e78 | One P2, the same stale-clock pattern at the shared user-row upsert when one identity joins two organizations at once, a wait point that predates this change: tracked as issue #23. |
+
+All ten review threads are resolved. The Playwright run on 44492db failed one journey ("STOP after launch cancels pending sends ...") on both attempts: it opened `/contacts?search=Kamran`, but the contacts list never read filters from the URL, so it showed the unfiltered first page, and the "E2E Contact" rows that every run of the contacts journey adds to the long-lived development database had pushed the seeded contact onto the second page (26 names before it, 10 of them from today's runs). The API search itself answered in under 100 ms. The contacts list now seeds its search, consent, group, tag and archived filters from the URL (aed9134, keys aligned in 1ef21b4), which makes deep links work and the journey independent of accumulated data.
+
+On the tree of 7170e78: `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 75, integration 13 suites / 79 tests, WhatsApp assets 8 checks, production builds) and `pnpm test:e2e` passed (9 journeys). The commit that records this outcome changes only `plan/` files and was not sent for a further round.

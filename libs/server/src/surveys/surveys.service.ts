@@ -25,6 +25,7 @@ import type { Prisma, Survey } from '../persistence/prisma.service';
 import { TenantDbFactory } from '../persistence/tenant-db.factory';
 import type { TenantTx } from '../persistence/tenant-db';
 import { revisionInclude, toRevisionDto, toRunSummary, type RevisionWithQuestions } from './survey-mapper';
+import { assertSurveyVisible } from './visibility';
 
 type SurveyWithRevisions = Survey & { revisions: RevisionWithQuestions[]; runs: Prisma.SurveyRunGetPayload<{ include: { revision: { select: { revisionNumber: true } } } }>[] };
 
@@ -46,9 +47,11 @@ export class SurveysService {
 
   async list(ctx: TenantContext, query: SurveyListQuery): Promise<Page<SurveyListItemDto>> {
     const db = this.dbFactory.for(ctx);
+    // Viewers see published surveys only (R06): drafts, archived drafts included, never reach their list.
+    const viewerStates = ctx.role === 'VIEWER' ? (['SCHEDULED', 'ACTIVE', 'CLOSED'] as const).filter((state) => !query.state || state === query.state) : null;
     const where: Prisma.SurveyWhereInput = {
       archivedAt: query.archived ? { not: null } : null,
-      state: query.state,
+      state: viewerStates ? { in: [...viewerStates] } : query.state,
       internalTitle: query.search ? { contains: query.search, mode: 'insensitive' } : undefined,
     };
     const [items, total] = await Promise.all([
@@ -160,6 +163,7 @@ export class SurveysService {
   async get(ctx: TenantContext, surveyId: string): Promise<SurveyDetailDto> {
     const db = this.dbFactory.for(ctx);
     const survey = await this.load(db, surveyId);
+    assertSurveyVisible(ctx, survey);
     const revision = survey.revisions[0];
     const liveRun = survey.runs.find((run) => run.kind === 'LIVE' && run.state !== 'CANCELED') ?? null;
     const contentErrors = this.contentErrors(revision);
@@ -226,6 +230,7 @@ export class SurveysService {
   async preview(ctx: TenantContext, surveyId: string): Promise<PreviewMessageDto[]> {
     const db = this.dbFactory.for(ctx);
     const survey = await this.load(db, surveyId);
+    assertSurveyVisible(ctx, survey);
     const revision = survey.revisions[0];
     const org = await db.organization.findUniqueOrThrow({ where: { id: ctx.organizationId } });
     const orgCopy = this.planner.org(org);

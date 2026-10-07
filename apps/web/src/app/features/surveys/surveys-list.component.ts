@@ -62,7 +62,10 @@ import { SHARED } from '../../shared/ui';
 export class SurveysListComponent {
   readonly auth = inject(AuthService);
   private readonly api = inject(ApiService);
-  readonly states = SURVEY_STATES;
+  /** Viewers never see drafts, so the filter does not offer them. */
+  get states(): readonly string[] {
+    return this.auth.hasRole('VIEWER') ? SURVEY_STATES.filter((state) => state !== 'DRAFT') : SURVEY_STATES;
+  }
   readonly columns = ['title', 'state', 'questions', 'opens', 'closes', 'responded', 'updated'];
   readonly page = signal<Page<SurveyListItemDto> | null>(null);
   readonly loading = signal(false);
