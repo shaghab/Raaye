@@ -179,13 +179,15 @@ export class DeliveryService implements JobHandler {
     const handoff = await db.$transaction(
       async (tx) => {
         await tx.$queryRaw`SELECT id FROM contacts WHERE id = ${message.contactId}::uuid AND organization_id = ${organizationId}::uuid FOR UPDATE`;
+        // The lock may have been waited for: deadlines are judged on the clock as of this moment.
+        const handoffAt = this.clock.now();
         const fresh = await tx.message.findUnique({ where: { id: message.id }, include: { contact: true, connection: true, run: true } });
         const conversation = await tx.conversation.findUnique({ where: { organizationId_contactId: { organizationId, contactId: message.contactId } } });
         const decision: PolicyDecision =
           !fresh || fresh.state !== 'SENDING'
             ? { allowed: false, reason: 'CANCELED_BEFORE_SEND' }
             : evaluateSendPolicy({
-                now,
+                now: handoffAt,
                 providerMode: mode,
                 kind: fresh.kind,
                 isFreeForm: fresh.isFreeForm,

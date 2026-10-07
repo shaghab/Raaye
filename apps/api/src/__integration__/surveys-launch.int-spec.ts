@@ -294,6 +294,47 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
   });
 
+  it('a survey that closes while the worker waits for the contact lock is not sent (R27, R45)', async () => {
+    const waiter = await createContact('Deadline Dawood', '+923001000034', 'GRANTED');
+    const id = await createSurvey('Closes during hand-off', { audience: { mode: 'SELECTED', contactIds: [waiter] } });
+    await request(t.server).patch(`/api/v1/surveys/${id}`).set('Authorization', admin.authorization).send({ durationSeconds: 3600 }).expect(200);
+    const launched = (await request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).send({ mode: 'NOW' }).expect(200)).body;
+    await t.app.get(JobRunner).runOnce(1, 1);
+    const pending = await t.prisma.message.findFirstOrThrow({ where: { runId: launched.liveRun.id } });
+    expect(pending.state).toBe('PENDING');
+    const provider = t.app.get<ProviderAdapter>(MESSAGING_PROVIDER);
+    const sendSpy = jest.spyOn(provider, 'send');
+    // Hold the contact lock while the clock passes the closing time, then let the worker in.
+    const tenantDb = createTenantDb(t.prisma, orgId);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const holding = tenantDb.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM contacts WHERE id = ${waiter}::uuid FOR UPDATE`;
+        await gate;
+      },
+      { timeout: 20_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const sending = t.app.get(DeliveryService).send(orgId, pending.id);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    t.clock.set(new Date('2026-10-10T10:00:01.000Z'));
+    release();
+    await holding;
+    expect(await sending).toBe('SUPPRESSED');
+    expect(sendSpy).not.toHaveBeenCalled();
+    sendSpy.mockRestore();
+    const after = await t.prisma.message.findUniqueOrThrow({ where: { id: pending.id }, include: { attempts: true } });
+    expect(after).toMatchObject({ state: 'SUPPRESSED', suppressionReason: 'SURVEY_CLOSED' });
+    expect(after.attempts.map((attempt) => [attempt.outcome, attempt.errorCode])).toEqual([['FAILED', 'SURVEY_CLOSED']]);
+    t.clock.set(new Date('2026-10-10T09:00:00.000Z'));
+    await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
+    // Keep the organization-wide audience of later tests unchanged.
+    await request(t.server).post(`/api/v1/contacts/${waiter}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_INVITATIONS'], type: 'WITHDRAWN', evidenceAt: '2026-10-10T09:00:30Z', evidenceReference: 'Phone' }).expect(201);
+  });
+
   it('draft edits and launch of the same survey serialize: a launched survey freezes exactly what was validated (R29)', async () => {
     for (let round = 0; round < 4; round += 1) {
       const id = await createSurvey(`Edit race ${round}`, { audience: { mode: 'SELECTED', contactIds: [contacts['Ehsan']] } });
