@@ -31,6 +31,15 @@
       "reviewId": 5439873411,
       "reviewedAt": "2026-10-07T08:50:10Z",
       "findings": 4
+    },
+    {
+      "headSha": "721765b",
+      "requestedAt": "2026-10-07T09:15:15.161625+00:00",
+      "status": "completed",
+      "round": 4,
+      "reviewId": 5440260147,
+      "reviewedAt": "2026-10-07T09:23:18Z",
+      "findings": 6
     }
   ],
   "processedFindings": [
@@ -199,6 +208,72 @@
       "action": "tracked",
       "issue": "https://github.com/shaghab/Raaye/issues/9",
       "resolved": true
+    },
+    {
+      "reviewId": 5440260147,
+      "commentId": 4205211492,
+      "threadId": "PRRT_kwDOU--Sjc6p1pkP",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/readiness.service.ts",
+      "title": "Add a provisioning path for live messaging connections",
+      "action": "fixed",
+      "commit": "ae6b367",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440260147,
+      "commentId": 4205211501,
+      "threadId": "PRRT_kwDOU--Sjc6p1pkW",
+      "priority": "P1",
+      "file": "libs/server/src/conversation/inbox.service.ts",
+      "title": "Reject webhook traffic for disabled connections",
+      "action": "fixed",
+      "commit": "3370b4f",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440260147,
+      "commentId": 4205211512,
+      "threadId": "PRRT_kwDOU--Sjc6p1pkb",
+      "priority": "P1",
+      "file": "libs/server/src/contacts/consent.service.ts",
+      "title": "Serialize consent decisions and cache recomputation",
+      "action": "fixed",
+      "commit": "ed2a877",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440260147,
+      "commentId": 4205211518,
+      "threadId": "PRRT_kwDOU--Sjc6p1pkf",
+      "priority": "P2",
+      "file": "apps/api/src/controllers/webhooks.controller.ts",
+      "title": "Fail closed when a connection's webhook secret is unresolved",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/10",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440260147,
+      "commentId": 4205211525,
+      "threadId": "PRRT_kwDOU--Sjc6p1pkj",
+      "priority": "P2",
+      "file": "libs/server/src/messaging/readiness.service.ts",
+      "title": "Scope template readiness to the requested operation",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/11",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440260147,
+      "commentId": 4205211532,
+      "threadId": "PRRT_kwDOU--Sjc6p1pkl",
+      "priority": "P2",
+      "file": "libs/server/src/reporting/sharing.service.ts",
+      "title": "Cancel queued result invitations when revoking a snapshot",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/12",
+      "resolved": true
     }
   ],
   "issues": [
@@ -237,8 +312,32 @@
       "url": "https://github.com/shaghab/Raaye/issues/9",
       "priority": "P2",
       "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204906846"
+    },
+    {
+      "number": 10,
+      "url": "https://github.com/shaghab/Raaye/issues/10",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205211518"
+    },
+    {
+      "number": 11,
+      "url": "https://github.com/shaghab/Raaye/issues/11",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205211525"
+    },
+    {
+      "number": 12,
+      "url": "https://github.com/shaghab/Raaye/issues/12",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205211532"
+    },
+    {
+      "number": 13,
+      "url": "https://github.com/shaghab/Raaye/issues/13",
+      "priority": "Needs triage",
+      "source": "self-identified while fixing https://github.com/shaghab/Raaye/pull/3#discussion_r4205211492 (first organization/Admin bootstrap in a live deployment)"
     }
   ],
   "blockers": [],
-  "updatedAt": "2026-10-07T09:15:04.387560+00:00"
+  "updatedAt": "2026-10-07T09:42:15.480842+00:00"
 }

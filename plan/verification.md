@@ -8,8 +8,8 @@ What actually ran for this build, with outcomes. Environment: Linux sandbox, Nod
 | --- | --- | --- |
 | Lint (7 projects) | `pnpm lint` | passed |
 | Strict typecheck (apps, libs, test files, e2e) | `pnpm typecheck` | passed |
-| Unit tests | `pnpm test` | passed: contracts 4, domain 36, server 17, web 6 (63 tests) |
-| Integration tests (real PostgreSQL) | `pnpm test:integration` | passed: 10 suites, 55 tests |
+| Unit tests | `pnpm test` | passed: contracts 4, domain 36, server 18, web 6 (64 tests) |
+| Integration tests (real PostgreSQL) | `pnpm test:integration` | passed: 11 suites, 59 tests |
 | WhatsApp asset validation | `pnpm whatsapp:validate` | passed: 8 checks (3 Flows, 3 fixtures, 2 template specs) |
 | Production builds (api, worker, web) | `pnpm build` | passed; web initial bundle 658 kB raw / 161 kB transfer |
 | All of the above in one run | `pnpm verify` | passed (lint 11 s, typecheck 27 s, unit 11 s, integration 50 s, assets 2 s, builds 25 s) |
@@ -81,3 +81,7 @@ Three P1 findings were fixed with regression tests (audience filter composition,
 ## Review round 3 (Codex, commit 0ddb201)
 
 Two P1 findings were fixed with regression tests (readiness is checked before a run is activated and blocked activations are retried by the sweep until the closing time; disabled messaging connections are honored by readiness, the send policy gate and the simulator) and two P2 findings were tracked as GitHub issues #8 and #9. After the fixes: `pnpm lint` passed (7 projects), `pnpm typecheck` passed (7 projects), unit tests passed for 6 projects (server 17), integration suite 10 suites / 55 tests passed, `pnpm whatsapp:validate` 8 checks passed.
+
+## Review round 4 (Codex, commit 721765b)
+
+Three P1 findings were fixed with regression tests (signed webhook traffic for a disabled connection is quarantined; the first Settings save provisions the organization's sender for the configured mode; consent decisions serialize under a contact row lock) and three P2 findings were tracked as GitHub issues #10, #11 and #12. A deployment gap noticed while fixing the provisioning finding (no automated first organization/Admin in a live deployment) is tracked as issue #13. After the fixes: `pnpm lint` passed (7 projects), `pnpm typecheck` passed (7 projects), unit tests passed for 6 projects (server 18), integration suite 11 suites / 59 tests passed.
