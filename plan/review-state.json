@@ -85,6 +85,15 @@
       "reviewId": 5441192963,
       "reviewedAt": "2026-10-07T10:50:20Z",
       "findings": 2
+    },
+    {
+      "headSha": "af1d892",
+      "requestedAt": "2026-10-07T11:00:39.440964+00:00",
+      "status": "completed",
+      "round": 10,
+      "reviewId": 5441343612,
+      "reviewedAt": "2026-10-07T11:03:37Z",
+      "findings": 1
     }
   ],
   "processedFindings": [
@@ -462,6 +471,17 @@
       "action": "fixed",
       "commit": "c3a4a09",
       "resolved": true
+    },
+    {
+      "reviewId": 5441343612,
+      "commentId": 4206097057,
+      "threadId": "PRRT_kwDOU--Sjc6p31dL",
+      "priority": "P1",
+      "file": "libs/server/src/conversation/conversation.service.ts",
+      "title": "Bind the notice version to each consent action",
+      "action": "fixed",
+      "commit": "368dece",
+      "resolved": true
     }
   ],
   "issues": [
@@ -551,5 +571,5 @@
     }
   ],
   "blockers": [],
-  "updatedAt": "2026-10-07T11:00:26.556877+00:00"
+  "updatedAt": "2026-10-07T11:36:52.767913+00:00"
 }

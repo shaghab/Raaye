@@ -105,3 +105,7 @@ One P1 finding was fixed with a regression test (the hand-off re-check judges de
 ## Review round 9 (Codex, commit bd550e2)
 
 Two P1 findings were fixed with regression tests (consent evidence records the notice version that the prompt actually showed; test-run creation serializes with archive and draft edits on the survey row). No lower-priority findings were raised. After the fixes: `pnpm lint` passed (7 projects), `pnpm typecheck` passed (7 projects), unit tests passed for 6 projects (server 18), integration suite 11 suites / 68 tests passed.
+
+## Review round 10 (Codex, commit af1d892)
+
+One P1 finding was fixed with a regression test (each consent button carries the notice version it was rendered with, so an older button records its own wording after a re-prompt). No lower-priority findings were raised. After the fix: `pnpm lint` passed (7 projects), `pnpm typecheck` passed (7 projects), unit tests passed for 6 projects (server 18), integration suite 11 suites / 68 tests passed.
