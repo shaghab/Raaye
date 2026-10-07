@@ -24,28 +24,30 @@ function build(scenario: Scenario) {
   const token = 'token-123';
   const invitation = { id: 'inv-1', organizationId: 'org-1', email: 'new@example.org', role: 'VIEWER' as const, tokenHash: hashToken(token), expiresAt: new Date('2026-10-10T12:00:00.000Z'), acceptedAt: null, revokedAt: null };
   const calls: string[] = [];
+  let transactions = 0;
   const tx = {
-    $queryRaw: async () => [],
-    staffInvitation: { updateMany: async () => ({ count: scenario.consumed ?? 1 }), update: async () => invitation },
-    user: { upsert: async () => ({ id: 'user-1' }) },
+    $queryRaw: async (strings: TemplateStringsArray) => {
+      if (strings.join('?').includes('staff_invitations')) {
+        if (scenario.reconcileError) throw scenario.reconcileError;
+        calls.push('lock-invitation');
+      }
+      return [];
+    },
+    staffInvitation: {
+      updateMany: async () => ({ count: scenario.consumed ?? 1 }),
+      update: async () => invitation,
+      findUnique: async () => ({ acceptedByUserId: scenario.acceptedByUserId ?? null }),
+    },
+    user: { upsert: async () => ({ id: 'user-1' }), findUnique: async () => scenario.userRow ?? null },
     organizationMembership: { upsert: async () => ({}) },
     auditEvent: { create: async () => ({}) },
   };
   const prisma = {
-    staffInvitation: {
-      findUnique: async (args: { where: { tokenHash?: string; id?: string } }) => {
-        if (scenario.reconcileError && args.where.id) throw scenario.reconcileError;
-        return args.where.id ? { acceptedByUserId: scenario.acceptedByUserId ?? null } : invitation;
-      },
-    },
-    user: {
-      findUnique: async () => {
-        if (scenario.reconcileError) throw scenario.reconcileError;
-        return scenario.userRow ?? null;
-      },
-    },
+    staffInvitation: { findUnique: async () => invitation },
     $transaction: async (fn: (client: typeof tx) => Promise<unknown>) => {
-      if (scenario.transactionError) throw scenario.transactionError;
+      transactions += 1;
+      // The first transaction is the acceptance itself; a later one is the reconciliation read.
+      if (transactions === 1 && scenario.transactionError) throw scenario.transactionError;
       return fn(tx);
     },
   };
@@ -95,19 +97,19 @@ describe('invitation acceptance and the account it provisions', () => {
   it('treats an ambiguous failure whose acceptance the database shows as persisted as a success', async () => {
     const { service, token, calls } = build({ transactionError: dropped, userRow: { id: 'user-1' }, acceptedByUserId: 'user-1' });
     await expect(accept(service, token)).resolves.toEqual({ email: 'new@example.org' });
-    expect(calls).toEqual(['create']);
+    expect(calls).toEqual(['create', 'lock-invitation']);
   });
 
-  it('removes the account after an ambiguous failure only when the database shows no trace of the acceptance', async () => {
+  it('removes the account after an ambiguous failure only once the invitation row lock confirms there is no trace of the acceptance', async () => {
     const { service, token, calls } = build({ transactionError: dropped, userRow: null });
     await expect(accept(service, token)).rejects.toBe(dropped);
-    expect(calls).toEqual(['create', 'delete']);
+    expect(calls).toEqual(['create', 'lock-invitation', 'delete']);
   });
 
   it('keeps the account when the state after an ambiguous failure cannot be confirmed', async () => {
     const inconsistent = build({ transactionError: dropped, userRow: { id: 'user-1' }, acceptedByUserId: null });
     await expect(accept(inconsistent.service, inconsistent.token)).rejects.toBe(dropped);
-    expect(inconsistent.calls).toEqual(['create']);
+    expect(inconsistent.calls).toEqual(['create', 'lock-invitation']);
     const unreachable = build({ transactionError: dropped, reconcileError: new Error('database unreachable') });
     await expect(accept(unreachable.service, unreachable.token)).rejects.toBe(dropped);
     expect(unreachable.calls).toEqual(['create']);

@@ -265,16 +265,21 @@ export class OrganizationService {
 
   /**
    * What became of the acceptance transaction. A domain refusal is raised inside the callback before
-   * any commit, so it rolled back for certain; for anything else the authoritative rows decide, and
-   * an unreachable database leaves the question open.
+   * any commit, so it rolled back for certain. For anything else the authoritative rows decide, read
+   * only after a lock on the invitation row has waited for the failed transaction to finish resolving
+   * (a commit whose acknowledgement was lost may still be in flight); an unreachable database leaves
+   * the question open.
    */
   private async acceptanceOutcome(invitationId: string, firebaseUid: string, error: unknown): Promise<'rolled-back' | 'persisted' | 'unknown'> {
     if (error instanceof DomainError) return 'rolled-back';
     try {
-      const user = await this.prisma.user.findUnique({ where: { firebaseUid }, select: { id: true } });
-      if (!user) return 'rolled-back';
-      const invitation = await this.prisma.staffInvitation.findUnique({ where: { id: invitationId }, select: { acceptedByUserId: true } });
-      return invitation?.acceptedByUserId === user.id ? 'persisted' : 'unknown';
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM staff_invitations WHERE id = ${invitationId}::uuid FOR UPDATE`;
+        const user = await tx.user.findUnique({ where: { firebaseUid }, select: { id: true } });
+        if (!user) return 'rolled-back' as const;
+        const invitation = await tx.staffInvitation.findUnique({ where: { id: invitationId }, select: { acceptedByUserId: true } });
+        return invitation?.acceptedByUserId === user.id ? ('persisted' as const) : ('unknown' as const);
+      });
     } catch {
       return 'unknown';
     }
