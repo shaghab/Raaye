@@ -240,17 +240,44 @@ export class OrganizationService {
     try {
       await this.consumeInvitation(invitation, firebaseUid, input.displayName, correlationId);
     } catch (error) {
-      // The account was provisioned for this acceptance only. If the invitation can no longer be consumed
-      // (it expired during the lock wait, was revoked or was used), remove the account again so that no
-      // orphan credentials remain and a fresh invitation can be accepted with a new password.
-      if (createdUid) {
+      if (!createdUid) throw error;
+      // The account was provisioned for this acceptance only. It is removed again when the acceptance
+      // certainly rolled back (the invitation expired during the lock wait, was revoked or was used), so
+      // that no orphan credentials remain. Any other failure may hide a commit whose acknowledgement was
+      // lost, so the database decides: a persisted acceptance is a success, and an unconfirmed state keeps
+      // the account rather than stranding a membership bound to a deleted identity.
+      const outcome = await this.acceptanceOutcome(invitation.id, createdUid, error);
+      if (outcome === 'persisted') {
+        this.logger.warn({ invitationId: invitation.id }, 'Invitation acceptance was persisted although its transaction reported an error');
+        return { email };
+      }
+      if (outcome === 'rolled-back') {
         await this.firebase.deleteUser(createdUid).catch((cleanupError: unknown) => {
-          this.logger.warn({ err: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) }, 'Could not remove the account created for a failed invitation acceptance');
+          this.logger.warn({ invitationId: invitation.id, err: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) }, 'Could not remove the account created for a failed invitation acceptance');
         });
+      } else {
+        this.logger.warn({ invitationId: invitation.id }, 'Could not confirm whether the invitation acceptance was persisted; the created account is left in place');
       }
       throw error;
     }
     return { email };
+  }
+
+  /**
+   * What became of the acceptance transaction. A domain refusal is raised inside the callback before
+   * any commit, so it rolled back for certain; for anything else the authoritative rows decide, and
+   * an unreachable database leaves the question open.
+   */
+  private async acceptanceOutcome(invitationId: string, firebaseUid: string, error: unknown): Promise<'rolled-back' | 'persisted' | 'unknown'> {
+    if (error instanceof DomainError) return 'rolled-back';
+    try {
+      const user = await this.prisma.user.findUnique({ where: { firebaseUid }, select: { id: true } });
+      if (!user) return 'rolled-back';
+      const invitation = await this.prisma.staffInvitation.findUnique({ where: { id: invitationId }, select: { acceptedByUserId: true } });
+      return invitation?.acceptedByUserId === user.id ? 'persisted' : 'unknown';
+    } catch {
+      return 'unknown';
+    }
   }
 
   private async consumeInvitation(invitation: { id: string; organizationId: string; email: string; role: 'ADMIN' | 'SURVEY_MANAGER' | 'VIEWER' }, firebaseUid: string, displayName: string | undefined, correlationId: string): Promise<void> {
