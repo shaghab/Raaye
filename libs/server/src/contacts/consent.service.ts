@@ -26,7 +26,8 @@ export interface ConsentEventInput {
 
 /**
  * Append-only consent history with an effective-status cache on the contact row.
- * The cache is recomputed from the full event history inside the same transaction.
+ * Every decision runs under a row lock on the contact, so validation, event insertion and
+ * the recomputation of the cache from the full history serialize with concurrent decisions.
  */
 @Injectable()
 export class ConsentService {
@@ -72,8 +73,7 @@ export class ConsentService {
       throw new DomainError('VALIDATION_FAILED', 'Evidence time cannot be in the future', undefined, [{ path: 'evidenceAt', message: 'In the future' }]);
     }
     await db.$transaction(async (tx) => {
-      const contact = await tx.contact.findUnique({ where: { id: contactId } });
-      if (!contact) throw notFound('Contact');
+      await this.lockContact(tx, contactId);
       if (input.type === 'GRANTED') {
         for (const scope of input.scopes) {
           const current = deriveConsent(await this.loadEvents(tx, contactId), scope);
@@ -166,7 +166,7 @@ export class ConsentService {
   /** Insert events and recompute the effective status cache for the contact. */
   async applyEvents(tx: TenantTx, contactId: string, events: ConsentEventInput[]): Promise<void> {
     if (events.length === 0) return;
-    const organizationId = await this.organizationIdOf(tx, contactId);
+    const organizationId = await this.lockContact(tx, contactId);
     await tx.consentEvent.createMany({
       data: events.map((event) => ({
         organizationId,
@@ -205,9 +205,15 @@ export class ConsentService {
     return tx.consentEvent.findMany({ where: { contactId }, select: { scope: true, type: true, evidenceAt: true, recordedAt: true }, orderBy: [{ evidenceAt: 'asc' }, { recordedAt: 'asc' }] });
   }
 
-  private async organizationIdOf(tx: TenantTx, contactId: string): Promise<string> {
-    const contact = await tx.contact.findUnique({ where: { id: contactId }, select: { organizationId: true } });
+  /**
+   * Row lock on the contact so concurrent consent decisions serialize (a STOP racing a staff
+   * grant or an import attestation). The tenant-scoped read proves the contact belongs to the
+   * organization before the raw lock statement runs; the lock is held until the transaction ends.
+   */
+  private async lockContact(tx: TenantTx, contactId: string): Promise<string> {
+    const contact = await tx.contact.findUnique({ where: { id: contactId }, select: { id: true, organizationId: true } });
     if (!contact) throw notFound('Contact');
+    await tx.$queryRaw`SELECT id FROM contacts WHERE id = ${contact.id}::uuid AND organization_id = ${contact.organizationId}::uuid FOR UPDATE`;
     return contact.organizationId;
   }
 }

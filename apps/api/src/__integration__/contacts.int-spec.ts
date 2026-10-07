@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { buildXlsx, parseCsv, readXlsx } from '@raaye/domain';
+import { buildXlsx, deriveConsent, parseCsv, readXlsx } from '@raaye/domain';
 import request from 'supertest';
 import { bootTestApp, resetDatabase, seedOrganization, seedUser, type SeededUser, type TestApp } from '../testing/harness';
 import { binaryParser } from '../testing/http';
@@ -281,6 +281,27 @@ describe('contacts, consent and imports (R10-R14, R50)', () => {
     const audit = (await request(t.server).get('/api/v1/audit?action=contacts.exported').set('Authorization', admin.authorization).expect(200)).body;
     expect(audit.total).toBeGreaterThanOrEqual(2);
     expect(JSON.stringify(audit.items)).not.toContain('923001234799');
+  });
+
+  it('concurrent consent decisions serialize so the cached status always matches the event history (R14)', async () => {
+    const contact = (await request(t.server).post('/api/v1/contacts').set('Authorization', manager.authorization).send({ name: 'Racing Rani', phone: '+923009990001' }).expect(201)).body;
+    const grant = (evidenceAt: string) => request(t.server).post(`/api/v1/contacts/${contact.id}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_INVITATIONS', 'SURVEY_RESULTS'], type: 'GRANTED', evidenceAt, evidenceReference: 'Form', reviewedNewEvidence: true });
+    const withdraw = (evidenceAt: string) => request(t.server).post(`/api/v1/contacts/${contact.id}/consent-events`).set('Authorization', admin.authorization).send({ scopes: ['SURVEY_INVITATIONS'], type: 'WITHDRAWN', evidenceAt, evidenceReference: 'Call' });
+    await grant('2026-09-01T00:00:00Z').expect(201);
+    for (let round = 0; round < 6; round += 1) {
+      const day = String(10 + round).padStart(2, '0');
+      // Even rounds: the grant carries the later evidence; odd rounds: the withdrawal does.
+      const grantAt = round % 2 === 0 ? `2026-09-${day}T12:00:00Z` : `2026-09-${day}T08:00:00Z`;
+      const responses = await Promise.all([withdraw(`2026-09-${day}T10:00:00Z`), grant(grantAt)]);
+      expect(responses[0].status).toBe(201);
+      expect([201, 400]).toContain(responses[1].status);
+      const events = await t.prisma.consentEvent.findMany({ where: { contactId: contact.id }, select: { scope: true, type: true, evidenceAt: true, recordedAt: true }, orderBy: [{ evidenceAt: 'asc' }, { recordedAt: 'asc' }] });
+      const cached = await t.prisma.contact.findUniqueOrThrow({ where: { id: contact.id } });
+      expect(cached.consentInvitations).toBe(deriveConsent(events, 'SURVEY_INVITATIONS').status);
+      expect(cached.consentResults).toBe(deriveConsent(events, 'SURVEY_RESULTS').status);
+      expect(cached.consentInvitations).toBe(round % 2 === 0 ? 'GRANTED' : 'WITHDRAWN');
+      expect(cached.consentResults).toBe('GRANTED');
+    }
   });
 });
 

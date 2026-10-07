@@ -17,7 +17,7 @@ Status legend: **Done** = implemented with the listed evidence; **Done (local)**
 | R11 | Manual add/edit/archive with provenance | `ContactsService`, contact form/detail UI | Integration `contacts.int-spec.ts`; E2E `contacts.spec.ts` | Done |
 | R12 | CSV/XLSX import wizard with validation, duplicates, attestation | `ImportService`, `import-wizard.component.ts`, fixtures | Integration `contacts.int-spec.ts` (import tests); E2E import preview | Done |
 | R13 | Groups/tags | `GroupsTagsService`, UI | Integration `contacts.int-spec.ts` | Done |
-| R14 | Consent evidence, scopes, withdrawal history; imports are not consent | `ConsentService`, `deriveConsent` | Unit `consent.spec.ts`; integration `contacts.int-spec.ts`, `conversation.int-spec.ts` (STOP) | Done |
+| R14 | Consent evidence, scopes, withdrawal history; imports are not consent | `ConsentService` (decisions serialized by a contact row lock), `deriveConsent` | Unit `consent.spec.ts`; integration `contacts.int-spec.ts` (including "concurrent consent decisions serialize…"), `conversation.int-spec.ts` (STOP) | Done |
 | R15 | Invitation with Start survey; voluntary notice | `MessagePlanner.invitation`, templates | Integration `surveys-launch.int-spec.ts`, `conversation.int-spec.ts` | Done |
 | R16 | Yes/No and Yes/No/Indifferent as buttons | `planRenderer`, planner | Unit `questions.spec.ts`; E2E journey | Done |
 | R17 | Single choice as buttons/list/Flow by size | `planRenderer` | Unit `questions.spec.ts`; integration conversation tests | Done |
