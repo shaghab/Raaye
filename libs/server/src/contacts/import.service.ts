@@ -132,6 +132,17 @@ export class ImportService {
       const result = validateImportRow(rowNumber, cells, mapping.defaultCountry, importDate);
       return { rowNumber, ...result };
     });
+    // Consent evidence can never be dated in the future: a later STOP would otherwise lose to it.
+    const now = this.clock.now();
+    if (mapping.consentAttestation && isFutureEvidence(mapping.consentAttestation.collectedAt, now)) {
+      throw invalid('The consent attestation date cannot be in the future', [{ path: 'consentAttestation.collectedAt', message: 'In the future' }]);
+    }
+    for (const entry of validated) {
+      if (entry.normalized?.consentEvidenceAt && isFutureEvidence(entry.normalized.consentEvidenceAt, now)) {
+        entry.errors.push({ rowNumber: entry.rowNumber, field: 'consentEvidenceAt', message: FUTURE_EVIDENCE_MESSAGE });
+        entry.normalized = null;
+      }
+    }
     // Duplicates inside the file: only the first valid row for a number can be used.
     const seen = new Map<string, number>();
     for (const entry of validated) {
@@ -190,7 +201,6 @@ export class ImportService {
         contactId,
       };
     });
-    const now = this.clock.now();
     await db.$transaction(async (tx) => {
       await tx.importRow.deleteMany({ where: { batchId: batch.id } });
       for (let i = 0; i < rowsData.length; i += 1000) await tx.importRow.createMany({ data: rowsData.slice(i, i + 1000) });
@@ -236,6 +246,8 @@ export class ImportService {
     const batch = await db.importBatch.findUnique({ where: { id: batchId } });
     if (!batch || batch.state !== 'CONFIRMED') throw new DomainError('IMPORT_STATE_INVALID', 'The import is not confirmed');
     const attestation = batch.consentAttestation as ImportMapping['consentAttestation'] | null;
+    const processedAt = this.clock.now();
+    if (attestation && isFutureEvidence(attestation.collectedAt, processedAt)) throw new DomainError('IMPORT_VALIDATION_FAILED', 'The consent attestation date is in the future; preview the import again');
     const rows = await db.importRow.findMany({ where: { batchId, status: { in: ['CREATE', 'UPDATE'] } }, orderBy: { rowNumber: 'asc' } });
     const groupCache = new Map<string, string>();
     const tagCache = new Map<string, string>();
@@ -249,6 +261,12 @@ export class ImportService {
           for (const row of chunk) {
             const normalized = row.normalized as (NormalizedImportRow & { consentEligible: boolean }) | null;
             if (!normalized) continue;
+            if (normalized.consentEligible && normalized.consentEvidenceAt && isFutureEvidence(normalized.consentEvidenceAt, processedAt)) {
+              // Revalidated at processing time: the staged plan is never trusted over the clock.
+              failures.push({ rowNumber: row.rowNumber, field: 'consentEvidenceAt', message: FUTURE_EVIDENCE_MESSAGE });
+              await tx.importRow.update({ where: { id: row.id }, data: { status: 'ERROR', errors: asJson([{ rowNumber: row.rowNumber, field: 'consentEvidenceAt', message: FUTURE_EVIDENCE_MESSAGE }]) } });
+              continue;
+            }
             try {
               if (row.status === 'CREATE') {
                 const existing = await tx.contact.findUnique({ where: { organizationId_phoneE164: { organizationId: ctx.organizationId, phoneE164: normalized.phoneE164 } } });
@@ -503,6 +521,13 @@ export class ImportService {
       })),
     );
   }
+}
+
+const FUTURE_EVIDENCE_MESSAGE = 'Consent evidence date cannot be in the future';
+
+/** Same one-minute clock tolerance as staff-recorded consent. */
+function isFutureEvidence(value: string, now: Date): boolean {
+  return new Date(value).getTime() > now.getTime() + 60_000;
 }
 
 /** Downloadable import templates. */

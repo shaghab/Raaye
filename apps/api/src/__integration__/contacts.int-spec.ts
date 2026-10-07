@@ -193,6 +193,35 @@ describe('contacts, consent and imports (R10-R14, R50)', () => {
     expect(bilalAfter?.consentResults).toBe('WITHDRAWN');
   });
 
+  it('rejects future-dated consent evidence from attestations and rows (R12, R14)', async () => {
+    const valid = readFileSync(path.join(FIXTURES, 'contacts-valid.csv'));
+    const uploaded = (await request(t.server).post('/api/v1/contact-imports').set('Authorization', manager.authorization).attach('file', valid, 'contacts-valid.csv').expect(201)).body;
+    const columns = { name: 'name', phone: 'phone', consent_date: 'consentEvidenceAt', consent_reference: 'consentReference' };
+    const future = await request(t.server)
+      .post(`/api/v1/contact-imports/${uploaded.id}/preview`)
+      .set('Authorization', manager.authorization)
+      .send({ columns, defaultCountry: 'PK', duplicateMode: 'SKIP_EXISTING', consentAttestation: { scopes: ['SURVEY_INVITATIONS'], source: 'Forms', collectedAt: '2026-10-11T00:00:00Z', wordingVersion: 'v1', statement: true } })
+      .expect(400);
+    expect(future.body.code).toBe('VALIDATION_FAILED');
+    expect(future.body.fieldErrors.map((error: { path: string }) => error.path)).toContain('consentAttestation.collectedAt');
+    // A row whose own evidence date is in the future is rejected even though the attestation is valid.
+    const csv = 'name,phone,consent_date\nFuture Fatima,+923001234801,2026-10-12\nPresent Parveen,+923001234802,2026-09-15\n';
+    const rows = (await request(t.server).post('/api/v1/contact-imports').set('Authorization', manager.authorization).attach('file', Buffer.from(csv), 'future.csv').expect(201)).body;
+    const preview = (
+      await request(t.server)
+        .post(`/api/v1/contact-imports/${rows.id}/preview`)
+        .set('Authorization', manager.authorization)
+        .send({ columns: { name: 'name', phone: 'phone', consent_date: 'consentEvidenceAt' }, defaultCountry: 'PK', duplicateMode: 'SKIP_EXISTING', consentAttestation: { scopes: ['SURVEY_INVITATIONS', 'SURVEY_RESULTS'], source: 'Forms', collectedAt: '2026-09-20T00:00:00Z', wordingVersion: 'v1', statement: true } })
+        .expect(200)
+    ).body;
+    expect(preview.batch.summary).toMatchObject({ totalRows: 2, create: 1, error: 1, consentGrantedRows: 1 });
+    expect(preview.rows[0].errors[0].message).toContain('cannot be in the future');
+    await request(t.server).post(`/api/v1/contact-imports/${rows.id}/confirm`).set('Authorization', manager.authorization).expect(200);
+    expect(await t.prisma.contact.count({ where: { organizationId: orgId, phoneE164: '+923001234801' } })).toBe(0);
+    const parveen = await t.prisma.contact.findUnique({ where: { organizationId_phoneE164: { organizationId: orgId, phoneE164: '+923001234802' } } });
+    expect(parveen?.consentInvitations).toBe('GRANTED');
+  });
+
   it('reports row-level errors for the invalid fixture and produces a downloadable report (R12)', async () => {
     const invalid = readFileSync(path.join(FIXTURES, 'contacts-invalid.csv'));
     const uploaded = (await request(t.server).post('/api/v1/contact-imports').set('Authorization', manager.authorization).attach('file', invalid, 'contacts-invalid.csv').expect(201)).body;
