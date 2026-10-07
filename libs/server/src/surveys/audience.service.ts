@@ -105,8 +105,12 @@ export class AudienceService {
         return { id: { in: definition.contactIds ?? [] } };
       case 'GROUPS_TAGS':
         return { archivedAt: null, ...groupTag };
-      case 'FILTERED':
-        return { archivedAt: null, ...contactFilterWhere(definition.filters), ...groupTag };
+      case 'FILTERED': {
+        // Both helpers may produce a top-level OR (occupation list, ANY group/tag match);
+        // spreading them would let one silently replace the other, so they are ANDed.
+        const predicates = [contactFilterWhere(definition.filters), groupTag].filter((clause) => Object.keys(clause).length > 0);
+        return predicates.length ? { archivedAt: null, AND: predicates } : { archivedAt: null };
+      }
     }
   }
 

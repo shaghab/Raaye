@@ -119,6 +119,14 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     const filtered = await createSurvey('Filtered', { audience: { mode: 'FILTERED', filters: { city: ['lahore'], gender: [] }, exclude: { contactIds: [contacts['Ayesha']] } } });
     const filteredPreview = (await request(t.server).post(`/api/v1/surveys/${filtered}/audience-preview`).set('Authorization', manager.authorization).expect(200)).body;
     expect(filteredPreview).toMatchObject({ selected: 7, eligible: 4, exclusions: { EXPLICITLY_EXCLUDED: 1 } });
+    // An occupation filter (an OR of occupations) combined with an ANY group/tag match (another OR)
+    // must narrow the audience to contacts that satisfy both.
+    await request(t.server).patch(`/api/v1/contacts/${contacts['Ayesha']}`).set('Authorization', manager.authorization).send({ occupation: 'Lawyer' }).expect(200);
+    await request(t.server).patch(`/api/v1/contacts/${contacts['Bilal']}`).set('Authorization', manager.authorization).send({ occupation: 'Teacher' }).expect(200);
+    const combined = await createSurvey('Filtered with groups', { audience: { mode: 'FILTERED', filters: { occupation: ['lawyer', 'Nurse'] }, groupIds: [group.id], tagIds: [tag.id], groupTagMatch: 'ANY' } });
+    const combinedPreview = (await request(t.server).post(`/api/v1/surveys/${combined}/audience-preview`).set('Authorization', manager.authorization).expect(200)).body;
+    expect(combinedPreview).toMatchObject({ selected: 1, eligible: 1 });
+    expect(combinedPreview.sample.map((item: { contactId: string }) => item.contactId)).toEqual([contacts['Ayesha']]);
     const selected = await createSurvey('Selected', { audience: { mode: 'SELECTED', contactIds: [contacts['Ayesha'], contacts['Ayesha'], contacts['Archived Asma']] } });
     const selectedPreview = (await request(t.server).post(`/api/v1/surveys/${selected}/audience-preview`).set('Authorization', manager.authorization).expect(200)).body;
     expect(selectedPreview).toMatchObject({ selected: 2, eligible: 1, exclusions: { CONTACT_ARCHIVED: 1 } });
