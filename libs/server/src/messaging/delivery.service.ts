@@ -16,7 +16,7 @@ import { TenantDbFactory } from '../persistence/tenant-db.factory';
 import type { TenantTx } from '../persistence/tenant-db';
 import { MESSAGING_PROVIDER, type ProviderAdapter } from './provider';
 import { isFreeForm, type RenderedMessage } from './rendered';
-import { evaluateSendPolicy } from './policy';
+import { evaluateSendPolicy, type PolicyDecision } from './policy';
 import type { NormalizedStatus } from './webhook-parser';
 
 export interface CreateMessageInput {
@@ -36,6 +36,8 @@ export interface CreateMessageInput {
 
 const DELIVERY_RANK: Record<string, number> = { QUEUED: 0, ACCEPTED: 1, SENT: 2, DELIVERED: 3, READ: 4 };
 const MAX_SEND_ATTEMPTS = 5;
+/** The hand-off transaction spans one provider call (15 s timeout in the Meta adapter) plus the outcome writes. */
+const HANDOFF_TIMEOUT_MS = 60_000;
 
 /**
  * One logical message per intended action with separate attempts and delivery evidence.
@@ -132,6 +134,8 @@ export class DeliveryService implements JobHandler {
         ? await tx.templateBinding.findFirst({ where: { connectionId: message.connectionId, purpose: templatePurpose, locale: rendered.type === 'template' ? rendered.language : 'en' } })
         : null;
       const flow = rendered.type === 'flow' ? await tx.flowBinding.findFirst({ where: { connectionId: message.connectionId, purpose: rendered.purpose } }) : null;
+      const templateReady = mode === 'mock' ? true : template?.status === 'APPROVED';
+      const flowReady = mode === 'mock' ? true : flow?.status === 'PUBLISHED' && Boolean(flow.providerFlowId);
       const decision = evaluateSendPolicy({
         now,
         providerMode: mode,
@@ -142,8 +146,8 @@ export class DeliveryService implements JobHandler {
         contact: message.contact,
         lastInboundAt: conversation?.lastInboundAt ?? null,
         run: message.run && message.kind !== 'OPT_OUT_ACK' ? { state: message.run.state, closesAt: message.run.closesAt } : null,
-        templateReady: mode === 'mock' ? true : template?.status === 'APPROVED',
-        flowReady: mode === 'mock' ? true : flow?.status === 'PUBLISHED' && Boolean(flow.providerFlowId),
+        templateReady,
+        flowReady,
         needsFlow: rendered.type === 'flow',
         priorUnknownAttempts: options.overrideUnknown ? 0 : message.attempts.filter((attempt) => attempt.outcome === 'UNKNOWN').length,
         priorAcceptedAttempts: message.attempts.filter((attempt) => attempt.outcome === 'ACCEPTED').length,
@@ -160,61 +164,101 @@ export class DeliveryService implements JobHandler {
       const attempt = await tx.messageAttempt.create({
         data: { organizationId, messageId: message.id, attemptNumber, startedAt: now, outcome: 'IN_FLIGHT', leaseOwner: this.jobs.workerId, authorizedByUserId: options.authorizedByUserId ?? null },
       });
-      return { outcome: 'CLAIMED' as const, message, rendered, flow, attempt, attemptNumber };
+      return { outcome: 'CLAIMED' as const, message, rendered, flow, attempt, attemptNumber, templateReady, flowReady };
     });
     if (claim.outcome === 'SKIPPED') return 'SKIPPED';
     if (claim.outcome === 'SUPPRESSED') {
       this.logger.info({ messageId, reason: claim.reason, kind: claim.kind }, 'Message suppressed by policy');
       return 'SUPPRESSED';
     }
-    const { message, rendered, flow, attempt, attemptNumber } = claim;
-    const result = await this.provider.send({
-      connection: { id: message.connection.id, phoneNumberId: message.connection.phoneNumberId, graphVersion: message.connection.graphVersion, appKey: message.connection.appKey, accessTokenRef: message.connection.accessTokenRef },
-      to: message.contact.phoneE164.replace(/^\+/, ''),
-      message: rendered,
-      messageId: message.id,
-      contactId: message.contactId,
-      attemptNumber,
-      isTest: message.isTest,
-      flowId: flow?.providerFlowId ?? null,
-    });
-    const finishedAt = this.clock.now();
-    if (result.outcome === 'ACCEPTED') {
-      await db.$transaction(async (tx) => {
-        await tx.messageAttempt.update({ where: { id: attempt.id }, data: { outcome: 'ACCEPTED', finishedAt, providerMessageId: result.providerMessageId } });
-        await tx.message.update({ where: { id: message.id }, data: { state: 'ACCEPTED', deliveryState: 'ACCEPTED', providerMessageId: result.providerMessageId, lastStatusAt: finishedAt } });
-        await this.markInvitation(tx, message.id, 'ACCEPTED', null);
-        await tx.conversation.upsert({
-          where: { organizationId_contactId: { organizationId, contactId: message.contactId } },
-          create: { organizationId, contactId: message.contactId, connectionId: message.connectionId },
-          update: {},
+    const { message, rendered, flow, attempt, attemptNumber, templateReady, flowReady } = claim;
+    // Phase 2: hand the message to the provider while holding the contact row lock. A consent
+    // decision waiting on that lock either committed before this transaction (the re-check below
+    // suppresses the message) or runs after the provider has answered, when the message is already
+    // out of our hands. The attempt committed in phase 1 keeps a crash during the call ambiguous.
+    const handoff = await db.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM contacts WHERE id = ${message.contactId}::uuid AND organization_id = ${organizationId}::uuid FOR UPDATE`;
+        const fresh = await tx.message.findUnique({ where: { id: message.id }, include: { contact: true, connection: true, run: true } });
+        const conversation = await tx.conversation.findUnique({ where: { organizationId_contactId: { organizationId, contactId: message.contactId } } });
+        const decision: PolicyDecision =
+          !fresh || fresh.state !== 'SENDING'
+            ? { allowed: false, reason: 'CANCELED_BEFORE_SEND' }
+            : evaluateSendPolicy({
+                now,
+                providerMode: mode,
+                kind: fresh.kind,
+                isFreeForm: fresh.isFreeForm,
+                isTest: fresh.isTest,
+                connectionEnabled: fresh.connection.enabled,
+                contact: fresh.contact,
+                lastInboundAt: conversation?.lastInboundAt ?? null,
+                run: fresh.run && fresh.kind !== 'OPT_OUT_ACK' ? { state: fresh.run.state, closesAt: fresh.run.closesAt } : null,
+                templateReady,
+                flowReady,
+                needsFlow: rendered.type === 'flow',
+                priorUnknownAttempts: 0,
+                priorAcceptedAttempts: 0,
+              });
+        if (!decision.allowed) {
+          await tx.messageAttempt.update({ where: { id: attempt.id }, data: { outcome: 'FAILED', finishedAt: this.clock.now(), errorCode: decision.reason, retryable: false } });
+          await tx.message.update({ where: { id: message.id }, data: { state: 'SUPPRESSED', deliveryState: 'SUPPRESSED', suppressionReason: decision.reason } });
+          await this.markInvitation(tx, message.id, 'SUPPRESSED', decision.reason);
+          await this.audit.record(ctx, { action: 'message.suppressed', resourceType: 'message', resourceId: message.id, metadata: { reason: decision.reason, kind: message.kind, attempt: attemptNumber } }, tx);
+          return { outcome: 'SUPPRESSED' as const, reason: decision.reason };
+        }
+        const result = await this.provider.send({
+          connection: { id: message.connection.id, phoneNumberId: message.connection.phoneNumberId, graphVersion: message.connection.graphVersion, appKey: message.connection.appKey, accessTokenRef: message.connection.accessTokenRef },
+          to: message.contact.phoneE164.replace(/^\+/, ''),
+          message: rendered,
+          messageId: message.id,
+          contactId: message.contactId,
+          attemptNumber,
+          isTest: message.isTest,
+          flowId: flow?.providerFlowId ?? null,
         });
-        await this.audit.record(ctx, { action: 'message.accepted', resourceType: 'message', resourceId: message.id, metadata: { kind: message.kind, attempt: attemptNumber } }, tx);
-      });
-      if (mode === 'mock') await this.mockAutoStatuses(organizationId, message.connectionId, result.providerMessageId, finishedAt);
+        const finishedAt = this.clock.now();
+        if (result.outcome === 'ACCEPTED') {
+          await tx.messageAttempt.update({ where: { id: attempt.id }, data: { outcome: 'ACCEPTED', finishedAt, providerMessageId: result.providerMessageId } });
+          await tx.message.update({ where: { id: message.id }, data: { state: 'ACCEPTED', deliveryState: 'ACCEPTED', providerMessageId: result.providerMessageId, lastStatusAt: finishedAt } });
+          await this.markInvitation(tx, message.id, 'ACCEPTED', null);
+          await tx.conversation.upsert({
+            where: { organizationId_contactId: { organizationId, contactId: message.contactId } },
+            create: { organizationId, contactId: message.contactId, connectionId: message.connectionId },
+            update: {},
+          });
+          await this.audit.record(ctx, { action: 'message.accepted', resourceType: 'message', resourceId: message.id, metadata: { kind: message.kind, attempt: attemptNumber } }, tx);
+          return { outcome: 'ACCEPTED' as const, providerMessageId: result.providerMessageId, finishedAt };
+        }
+        if (result.outcome === 'UNKNOWN') {
+          await tx.messageAttempt.update({ where: { id: attempt.id }, data: { outcome: 'UNKNOWN', finishedAt, errorCode: result.errorCode, errorDetail: result.detail ?? null } });
+          await tx.message.update({ where: { id: message.id }, data: { state: 'UNKNOWN', deliveryState: 'UNKNOWN', lastErrorCode: result.errorCode } });
+          await this.markInvitation(tx, message.id, 'UNKNOWN', result.errorCode);
+          await this.audit.record(ctx, { action: 'message.outcome_unknown', resourceType: 'message', resourceId: message.id, metadata: { errorCode: result.errorCode, attempt: attemptNumber } }, tx);
+          return { outcome: 'UNKNOWN' as const };
+        }
+        const finalFailure = !result.retryable || attemptNumber >= MAX_SEND_ATTEMPTS;
+        await tx.messageAttempt.update({ where: { id: attempt.id }, data: { outcome: 'FAILED', finishedAt, errorCode: result.errorCode, errorDetail: result.detail ?? null, retryable: result.retryable } });
+        await tx.message.update({
+          where: { id: message.id },
+          data: finalFailure ? { state: 'FAILED', deliveryState: 'FAILED', lastErrorCode: result.errorCode } : { state: 'PENDING', lastErrorCode: result.errorCode },
+        });
+        if (finalFailure) await this.markInvitation(tx, message.id, 'FAILED', result.errorCode);
+        return { outcome: 'FAILED' as const, finalFailure, errorCode: result.errorCode, detail: result.detail ?? null };
+      },
+      { timeout: HANDOFF_TIMEOUT_MS, maxWait: 15_000 },
+    );
+    if (handoff.outcome === 'SUPPRESSED') {
+      this.logger.info({ messageId, reason: handoff.reason, kind: message.kind }, 'Message suppressed by policy before hand-off');
+      return 'SUPPRESSED';
+    }
+    if (handoff.outcome === 'ACCEPTED') {
+      if (mode === 'mock') await this.mockAutoStatuses(organizationId, message.connectionId, handoff.providerMessageId, handoff.finishedAt);
       return 'ACCEPTED';
     }
-    if (result.outcome === 'UNKNOWN') {
-      await db.$transaction(async (tx) => {
-        await tx.messageAttempt.update({ where: { id: attempt.id }, data: { outcome: 'UNKNOWN', finishedAt, errorCode: result.errorCode, errorDetail: result.detail ?? null } });
-        await tx.message.update({ where: { id: message.id }, data: { state: 'UNKNOWN', deliveryState: 'UNKNOWN', lastErrorCode: result.errorCode } });
-        await this.markInvitation(tx, message.id, 'UNKNOWN', result.errorCode);
-        await this.audit.record(ctx, { action: 'message.outcome_unknown', resourceType: 'message', resourceId: message.id, metadata: { errorCode: result.errorCode, attempt: attemptNumber } }, tx);
-      });
-      return 'UNKNOWN';
-    }
-    const exhausted = attemptNumber >= MAX_SEND_ATTEMPTS;
-    const finalFailure = !result.retryable || exhausted;
-    await db.$transaction(async (tx) => {
-      await tx.messageAttempt.update({ where: { id: attempt.id }, data: { outcome: 'FAILED', finishedAt, errorCode: result.errorCode, errorDetail: result.detail ?? null, retryable: result.retryable } });
-      await tx.message.update({
-        where: { id: message.id },
-        data: finalFailure ? { state: 'FAILED', deliveryState: 'FAILED', lastErrorCode: result.errorCode } : { state: 'PENDING', lastErrorCode: result.errorCode },
-      });
-      if (finalFailure) await this.markInvitation(tx, message.id, 'FAILED', result.errorCode);
-    });
-    if (finalFailure) throw new PermanentJobError(result.errorCode, result.detail);
-    throw new DomainError('SEND_FAILED', result.detail ?? result.errorCode, { errorCode: result.errorCode }, undefined, 503);
+    if (handoff.outcome === 'UNKNOWN') return 'UNKNOWN';
+    if (handoff.finalFailure) throw new PermanentJobError(handoff.errorCode, handoff.detail ?? undefined);
+    throw new DomainError('SEND_FAILED', handoff.detail ?? handoff.errorCode, { errorCode: handoff.errorCode }, undefined, 503);
   }
 
   /** Mock mode mirrors a realistic provider: accepted messages get sent/delivered callbacks. */

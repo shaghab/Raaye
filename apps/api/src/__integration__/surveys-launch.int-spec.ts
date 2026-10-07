@@ -1,4 +1,4 @@
-import { DeliveryService, JobRunner, LaunchService, createTenantDb } from '@raaye/server';
+import { DeliveryService, JobRunner, LaunchService, MESSAGING_PROVIDER, TenantDbFactory, createTenantDb, type ProviderAdapter } from '@raaye/server';
 import request from 'supertest';
 import { drainJobs, sweepOnly } from '../testing/jobs';
 import { bootTestApp, resetDatabase, seedOrganization, seedUser, type SeededUser, type TestApp } from '../testing/harness';
@@ -221,6 +221,76 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     const after = await t.prisma.message.findUniqueOrThrow({ where: { id: pending.id }, include: { attempts: true } });
     expect(after.state).toBe('CANCELED');
     expect(after.attempts).toHaveLength(0);
+    await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
+  });
+
+  it('a STOP between the claim and the hand-off is honoured, and one arriving during the hand-off waits for it (R15)', async () => {
+    const first = await createContact('Handoff Hina', '+923001000032', 'GRANTED');
+    const second = await createContact('Handoff Hadi', '+923001000033', 'GRANTED');
+    const id = await createSurvey('Stop during hand-off', { audience: { mode: 'SELECTED', contactIds: [first, second] } });
+    const launched = (await request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).send({ mode: 'NOW' }).expect(200)).body;
+    await t.app.get(JobRunner).runOnce(1, 1);
+    const messages = await t.prisma.message.findMany({ where: { runId: launched.liveRun.id } });
+    const firstMessage = messages.find((message) => message.contactId === first);
+    const secondMessage = messages.find((message) => message.contactId === second);
+    if (!firstMessage || !secondMessage) throw new Error('expected one pending invitation per contact');
+    const delivery = t.app.get(DeliveryService);
+    const provider = t.app.get<ProviderAdapter>(MESSAGING_PROVIDER);
+    const sendSpy = jest.spyOn(provider, 'send');
+    const withdraw = (contactId: string) =>
+      request(t.server).post(`/api/v1/contacts/${contactId}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_INVITATIONS'], type: 'WITHDRAWN', evidenceAt: '2026-10-10T09:00:30Z', evidenceReference: 'Phone' }).expect(201);
+    // 1. The STOP commits after the claim but before the hand-off: the re-check under the lock suppresses the message.
+    const factory = t.app.get(TenantDbFactory);
+    const realDb = factory.forOrganization(orgId);
+    let transactions = 0;
+    const forOrganization = jest.spyOn(factory, 'forOrganization').mockImplementation(
+      () =>
+        new Proxy(realDb, {
+          get(target, property) {
+            const value = Reflect.get(target, property);
+            if (property !== '$transaction') return typeof value === 'function' ? value.bind(target) : value;
+            return async (...args: unknown[]) => {
+              transactions += 1;
+              if (transactions === 2) await withdraw(first);
+              return (value as (...inner: unknown[]) => Promise<unknown>).apply(target, args);
+            };
+          },
+        }),
+    );
+    try {
+      expect(await delivery.send(orgId, firstMessage.id)).toBe('SUPPRESSED');
+    } finally {
+      forOrganization.mockRestore();
+    }
+    expect(sendSpy).not.toHaveBeenCalled();
+    const suppressed = await t.prisma.message.findUniqueOrThrow({ where: { id: firstMessage.id }, include: { attempts: true } });
+    expect(suppressed).toMatchObject({ state: 'SUPPRESSED', suppressionReason: 'CONTACT_WITHDRAWN' });
+    expect(suppressed.attempts.map((attempt) => [attempt.outcome, attempt.errorCode])).toEqual([['FAILED', 'CONTACT_WITHDRAWN']]);
+    // 2. A STOP arriving while the hand-off holds the lock waits for the provider's answer instead of racing it.
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    sendSpy.mockImplementationOnce(async (req) => {
+      await gate;
+      return { outcome: 'ACCEPTED', providerMessageId: `wamid.gate.${req.messageId}` };
+    });
+    const sending = delivery.send(orgId, secondMessage.id);
+    for (let i = 0; i < 100 && sendSpy.mock.calls.length < 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    let withdrawn = false;
+    const stopping = withdraw(second).then(() => {
+      withdrawn = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(withdrawn).toBe(false);
+    release();
+    expect(await sending).toBe('ACCEPTED');
+    await stopping;
+    expect(withdrawn).toBe(true);
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: secondMessage.id } })).state).toBe('ACCEPTED');
+    expect((await t.prisma.contact.findUniqueOrThrow({ where: { id: second } })).consentInvitations).toBe('WITHDRAWN');
+    sendSpy.mockRestore();
     await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
   });
 
