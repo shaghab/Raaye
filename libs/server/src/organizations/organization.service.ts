@@ -232,12 +232,14 @@ export class OrganizationService {
       if (!input.password) throw new DomainError('VALIDATION_FAILED', 'Choose a password to create your account', undefined, [{ path: 'password', message: 'Required' }]);
       firebaseUid = await this.firebase.createUser(email, input.password, input.displayName);
     }
-    const now = this.clock.now();
     await this.prisma.$transaction(async (tx) => {
       // The organization row lock serializes acceptance with bootstrap re-runs and member administration:
       // a re-run's active-Admin count and the membership created here cannot interleave, and both paths
       // take the organization lock before touching invitations, so they never deadlock on each other.
       await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${invitation.organizationId}::uuid FOR UPDATE`;
+      // The deadline is judged on a clock reading taken after the lock wait, so an invitation that expired
+      // while this request waited is refused and `acceptedAt` never predates the wait.
+      const now = this.clock.now();
       const consumed = await tx.staffInvitation.updateMany({
         where: { id: invitation.id, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
         data: { acceptedAt: now },
