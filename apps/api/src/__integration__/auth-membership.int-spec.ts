@@ -136,6 +136,23 @@ describe('authentication and membership (R04, R05)', () => {
     t.clock.advance(-73 * 3600 * 1000);
   });
 
+  it('concurrent participant-notice changes receive distinct, increasing versions (R14)', async () => {
+    const admin = await seedUser(t.prisma, orgId, 'ADMIN');
+    const before = (await request(t.server).get('/api/v1/organization').set('Authorization', admin.authorization).expect(200)).body;
+    const texts = [1, 2, 3].map((n) => `Notice variant ${n}: this consultation is voluntary and your answers stay with authorized administrators only.`);
+    const responses = await Promise.all(texts.map((text) => request(t.server).patch('/api/v1/organization').set('Authorization', admin.authorization).send({ participantNotice: text })));
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200]);
+    const versions = responses.map((response) => response.body.participantNoticeVersion as number).sort((a, b) => a - b);
+    expect(versions).toEqual([before.participantNoticeVersion + 1, before.participantNoticeVersion + 2, before.participantNoticeVersion + 3]);
+    const after = (await request(t.server).get('/api/v1/organization').set('Authorization', admin.authorization).expect(200)).body;
+    expect(after.participantNoticeVersion).toBe(before.participantNoticeVersion + 3);
+    const winner = responses.find((response) => response.body.participantNoticeVersion === after.participantNoticeVersion);
+    expect(after.participantNotice).toBe(winner?.body.participantNotice);
+    // Saving the same wording again does not mint a new version.
+    const same = (await request(t.server).patch('/api/v1/organization').set('Authorization', admin.authorization).send({ participantNotice: after.participantNotice }).expect(200)).body;
+    expect(same.participantNoticeVersion).toBe(after.participantNoticeVersion);
+  });
+
   it('writes audit events that Admin can read and others cannot', async () => {
     const admin = await seedUser(t.prisma, orgId, 'ADMIN');
     const manager = await seedUser(t.prisma, orgId, 'SURVEY_MANAGER');

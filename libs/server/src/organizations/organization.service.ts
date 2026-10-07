@@ -59,24 +59,25 @@ export class OrganizationService {
 
   async update(ctx: TenantContext, input: OrganizationUpdate): Promise<OrganizationDto> {
     const db = this.dbFactory.for(ctx);
-    const current = await db.organization.findUnique({ where: { id: ctx.organizationId } });
-    if (!current) throw notFound('Organization');
-    const noticeChanged = input.participantNotice !== undefined && input.participantNotice !== current.participantNotice;
     const { livePolicyReviewed, ...fields } = input;
-    const updated = await db.organization.update({
-      where: { id: ctx.organizationId },
-      data: {
-        ...fields,
-        participantNoticeVersion: noticeChanged ? current.participantNoticeVersion + 1 : undefined,
-        livePolicyReviewedAt: livePolicyReviewed === undefined ? undefined : livePolicyReviewed ? this.clock.now() : null,
-        livePolicyReviewedById: livePolicyReviewed === undefined ? undefined : livePolicyReviewed ? ctx.userId : null,
-      },
-    });
-    await this.audit.record(ctx, {
-      action: 'organization.updated',
-      resourceType: 'organization',
-      resourceId: ctx.organizationId,
-      metadata: { fields: Object.keys(input) },
+    const updated = await db.$transaction(async (tx) => {
+      // The organization row lock serializes concurrent settings saves, so every notice text change
+      // receives its own version and a version always identifies exactly one wording.
+      await this.lockOrganization(tx, ctx.organizationId);
+      const current = await tx.organization.findUnique({ where: { id: ctx.organizationId } });
+      if (!current) throw notFound('Organization');
+      const noticeChanged = input.participantNotice !== undefined && input.participantNotice !== current.participantNotice;
+      const row = await tx.organization.update({
+        where: { id: ctx.organizationId },
+        data: {
+          ...fields,
+          participantNoticeVersion: noticeChanged ? { increment: 1 } : undefined,
+          livePolicyReviewedAt: livePolicyReviewed === undefined ? undefined : livePolicyReviewed ? this.clock.now() : null,
+          livePolicyReviewedById: livePolicyReviewed === undefined ? undefined : livePolicyReviewed ? ctx.userId : null,
+        },
+      });
+      await this.audit.record(ctx, { action: 'organization.updated', resourceType: 'organization', resourceId: ctx.organizationId, metadata: { fields: Object.keys(input), noticeVersion: row.participantNoticeVersion } }, tx);
+      return row;
     });
     return toOrganizationDto(updated);
   }
