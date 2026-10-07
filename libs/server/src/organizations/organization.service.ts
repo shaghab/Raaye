@@ -19,6 +19,7 @@ import type { TenantContext } from '../common/context';
 import { APP_CONFIG, type AppConfig } from '../config/env';
 import { PrismaService, type Organization } from '../persistence/prisma.service';
 import { TenantDbFactory } from '../persistence/tenant-db.factory';
+import type { TenantTx } from '../persistence/tenant-db';
 
 export function toOrganizationDto(org: Organization): OrganizationDto {
   return {
@@ -98,15 +99,19 @@ export class OrganizationService {
 
   async updateMember(ctx: TenantContext, membershipId: string, input: MemberUpdate): Promise<MemberDto> {
     const db = this.dbFactory.for(ctx);
-    const membership = await db.organizationMembership.findUnique({ where: { id: membershipId }, include: { user: true } });
-    if (!membership || membership.status !== 'ACTIVE') throw notFound('Member');
-    if (membership.role === 'ADMIN' && input.role !== 'ADMIN') await this.assertNotLastAdmin(ctx, membershipId);
-    const updated = await db.organizationMembership.update({ where: { id: membershipId }, data: { role: input.role }, include: { user: true } });
+    const { updated, previousRole } = await db.$transaction(async (tx) => {
+      await this.lockOrganization(tx, ctx.organizationId);
+      const membership = await tx.organizationMembership.findUnique({ where: { id: membershipId } });
+      if (!membership || membership.status !== 'ACTIVE') throw notFound('Member');
+      if (membership.role === 'ADMIN' && input.role !== 'ADMIN') await this.assertNotLastAdmin(tx, membershipId);
+      const row = await tx.organizationMembership.update({ where: { id: membershipId }, data: { role: input.role }, include: { user: true } });
+      return { updated: row, previousRole: membership.role };
+    });
     await this.audit.record(ctx, {
       action: 'member.role_changed',
       resourceType: 'membership',
       resourceId: membershipId,
-      metadata: { from: membership.role, to: input.role },
+      metadata: { from: previousRole, to: input.role },
     });
     return {
       id: updated.id,
@@ -121,18 +126,29 @@ export class OrganizationService {
 
   async revokeMember(ctx: TenantContext, membershipId: string): Promise<void> {
     const db = this.dbFactory.for(ctx);
-    const membership = await db.organizationMembership.findUnique({ where: { id: membershipId } });
-    if (!membership || membership.status !== 'ACTIVE') throw notFound('Member');
-    if (membership.role === 'ADMIN') await this.assertNotLastAdmin(ctx, membershipId);
-    await db.organizationMembership.update({
-      where: { id: membershipId },
-      data: { status: 'REVOKED', revokedAt: this.clock.now() },
+    await db.$transaction(async (tx) => {
+      await this.lockOrganization(tx, ctx.organizationId);
+      const membership = await tx.organizationMembership.findUnique({ where: { id: membershipId } });
+      if (!membership || membership.status !== 'ACTIVE') throw notFound('Member');
+      if (membership.role === 'ADMIN') await this.assertNotLastAdmin(tx, membershipId);
+      await tx.organizationMembership.update({
+        where: { id: membershipId },
+        data: { status: 'REVOKED', revokedAt: this.clock.now() },
+      });
     });
     await this.audit.record(ctx, { action: 'member.revoked', resourceType: 'membership', resourceId: membershipId });
   }
 
-  private async assertNotLastAdmin(ctx: TenantContext, membershipId: string): Promise<void> {
-    const otherAdmins = await this.dbFactory.for(ctx).organizationMembership.count({
+  /**
+   * Row lock on the organization so concurrent Admin downgrades/revocations serialize: the
+   * last-Admin check and the mutation run under the same lock and cannot interleave.
+   */
+  private async lockOrganization(tx: TenantTx, organizationId: string): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${organizationId}::uuid FOR UPDATE`;
+  }
+
+  private async assertNotLastAdmin(tx: TenantTx, membershipId: string): Promise<void> {
+    const otherAdmins = await tx.organizationMembership.count({
       where: { role: 'ADMIN', status: 'ACTIVE', id: { not: membershipId } },
     });
     if (otherAdmins === 0) {

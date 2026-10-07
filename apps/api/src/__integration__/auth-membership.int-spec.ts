@@ -65,6 +65,24 @@ describe('authentication and membership (R04, R05)', () => {
     expect(downgrade.body.code).toBe('LAST_ADMIN_PROTECTED');
   });
 
+  it('concurrent Admin downgrades cannot remove the last Admin (R05)', async () => {
+    const org = await seedOrganization(t.prisma, 'Org Race');
+    const first = await seedUser(t.prisma, org.id, 'ADMIN');
+    const second = await seedUser(t.prisma, org.id, 'ADMIN');
+    for (let round = 0; round < 3; round += 1) {
+      await t.prisma.organizationMembership.updateMany({ where: { organizationId: org.id }, data: { role: 'ADMIN', status: 'ACTIVE', revokedAt: null } });
+      const [a, b] = await Promise.all([
+        request(t.server).patch(`/api/v1/members/${second.membershipId}`).set('Authorization', first.authorization).send({ role: 'VIEWER' }),
+        request(t.server).delete(`/api/v1/members/${first.membershipId}`).set('Authorization', second.authorization),
+      ]);
+      const successes = [a.status, b.status].filter((status) => status < 300).length;
+      expect(successes).toBe(1);
+      const failed = a.status < 300 ? b : a;
+      expect(['LAST_ADMIN_PROTECTED', 'ROLE_FORBIDDEN']).toContain(failed.body.code);
+      expect(await t.prisma.organizationMembership.count({ where: { organizationId: org.id, role: 'ADMIN', status: 'ACTIVE' } })).toBe(1);
+    }
+  });
+
   it('staff invitations are single-use, expiring and bound to the invited email', async () => {
     const admin = await seedUser(t.prisma, orgId, 'ADMIN');
     const created = await request(t.server)
