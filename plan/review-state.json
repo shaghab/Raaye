@@ -9,11 +9,77 @@
     {
       "headSha": "596ac4cb65fdaf8c47e567639c9c7145c6fd02c9",
       "requestedAt": "2026-10-07T08:13:04.122257+00:00",
-      "status": "pending"
+      "status": "completed",
+      "reviewId": 5439499431,
+      "reviewedAt": "2026-10-07T08:17:22Z",
+      "findings": 5
     }
   ],
-  "processedFindings": [],
-  "issues": [],
+  "processedFindings": [
+    {
+      "reviewId": 5439499431,
+      "commentId": 4204606582,
+      "threadId": "PRRT_kwDOU--Sjc6p0Kg_",
+      "priority": "P1",
+      "file": "libs/server/src/conversation/inbox.service.ts",
+      "title": "Commit inbox rows together with their jobs",
+      "action": "fixed",
+      "commit": "8be5788",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439499431,
+      "commentId": 4204606591,
+      "threadId": "PRRT_kwDOU--Sjc6p0KhF",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/meta.provider.ts",
+      "title": "Mark post-transmission resets as unknown",
+      "action": "fixed",
+      "commit": "dc3d263",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439499431,
+      "commentId": 4204606597,
+      "threadId": "PRRT_kwDOU--Sjc6p0KhI",
+      "priority": "P1",
+      "file": "libs/server/src/organizations/organization.service.ts",
+      "title": "Serialize the last-Admin check and mutation",
+      "action": "fixed",
+      "commit": "80f69a1",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439499431,
+      "commentId": 4204606603,
+      "threadId": "PRRT_kwDOU--Sjc6p0KhO",
+      "priority": "P1",
+      "file": "libs/server/src/jobs/jobs.service.ts",
+      "title": "Push database jobs to Cloud Tasks",
+      "action": "fixed",
+      "commit": "25fd95e",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439499431,
+      "commentId": 4204606612,
+      "threadId": "PRRT_kwDOU--Sjc6p0KhT",
+      "priority": "P2",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Replay statuses whose projection update failed",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/4",
+      "resolved": false
+    }
+  ],
+  "issues": [
+    {
+      "number": 4,
+      "url": "https://github.com/shaghab/Raaye/issues/4",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204606612"
+    }
+  ],
   "blockers": [],
-  "updatedAt": "2026-10-07T08:13:04.122257+00:00"
+  "updatedAt": "2026-10-07T08:28:10.397005+00:00"
 }
