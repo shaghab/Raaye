@@ -379,6 +379,23 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     expect(await t.prisma.job.count({ where: { entityId: testRun.id, status: 'PENDING' } })).toBe(0);
   });
 
+  it('archive and test-run creation of the same draft serialize: an archived survey never sends test invitations (R30, R55)', async () => {
+    for (let round = 0; round < 4; round += 1) {
+      const id = await createSurvey(`Test race ${round}`, { audience: { mode: 'SELECTED', contactIds: [contacts['Ehsan']] } });
+      const [archived, tested] = await Promise.all([
+        request(t.server).post(`/api/v1/surveys/${id}/archive`).set('Authorization', manager.authorization),
+        request(t.server).post(`/api/v1/surveys/${id}/test-runs`).set('Authorization', manager.authorization).send({ contactIds: [contacts['Ayesha']] }),
+      ]);
+      expect(archived.status).toBe(200);
+      expect([201, 409]).toContain(tested.status);
+      await drainJobs(t);
+      const detail = (await request(t.server).get(`/api/v1/surveys/${id}`).set('Authorization', admin.authorization).expect(200)).body;
+      expect(detail.archivedAt).not.toBeNull();
+      expect(detail.testRuns.map((run: { state: string }) => run.state)).toEqual(tested.status === 201 ? ['CANCELED'] : []);
+      expect(await t.prisma.message.count({ where: { run: { surveyId: id }, state: { in: ['PENDING', 'SENDING', 'ACCEPTED'] } } })).toBe(0);
+    }
+  });
+
   it('archive and launch of the same draft serialize: an archived survey never has live outreach (R55)', async () => {
     for (let round = 0; round < 4; round += 1) {
       const id = await createSurvey(`Race survey ${round}`, { audience: { mode: 'SELECTED', contactIds: [contacts['Ehsan']] } });

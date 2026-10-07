@@ -178,6 +178,13 @@ export class LaunchService {
     const now = this.clock.now();
     const closesAt = new Date(now.getTime() + (input.durationSeconds ?? revision.durationSeconds) * 1000);
     await db.$transaction(async (tx) => {
+      // Serialized with archive and draft edits on the survey row; the checks above were made before the lock.
+      await tx.$queryRaw`SELECT id FROM surveys WHERE id = ${survey.id}::uuid AND organization_id = ${ctx.organizationId}::uuid FOR UPDATE`;
+      const fresh = await tx.survey.findUnique({ where: { id: survey.id }, select: { archivedAt: true, currentRevisionNumber: true, revisions: { where: { id: revision.id }, select: { updatedAt: true } } } });
+      if (!fresh || fresh.archivedAt) throw new DomainError('SURVEY_STATE_INVALID', 'Archived surveys cannot be tested');
+      if (fresh.currentRevisionNumber !== survey.currentRevisionNumber || fresh.revisions[0]?.updatedAt.getTime() !== revision.updatedAt.getTime()) {
+        throw new DomainError('SURVEY_STATE_INVALID', 'The survey was edited while the test run was being created; review it and send the test again');
+      }
       const run = await tx.surveyRun.create({
         data: {
           organizationId: ctx.organizationId,
