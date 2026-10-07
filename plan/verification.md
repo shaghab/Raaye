@@ -163,3 +163,16 @@ Not run: nothing in this change touches the Meta adapter, Cloud Tasks or the das
 | 3 | c90ff93 | P2: the acceptance compares expiry against a clock reading taken before the lock wait. Tracked as issue #21, not implemented. |
 
 All three review threads are resolved. After the fixes, on the tree of c90ff93: `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 68, integration 12 suites / 74 tests, WhatsApp assets 8 checks, production builds); `pnpm test:e2e` passed (9 journeys). The commit that records this outcome changes only `plan/` files and was not sent for a further round.
+
+## Follow-up: webhook secrets, Viewer drafts and invitation expiry (issues #10, #16, #21)
+
+Branch restarted from the merged `main` (dbfdc6f). Checks run on the working tree that became this pull request:
+
+| Check | Result |
+| --- | --- |
+| `pnpm verify` | passed: lint 7 projects, strict typecheck 7 projects, unit tests 70, integration 13 suites / 79 tests, WhatsApp assets 8 checks, production builds |
+| `pnpm test:e2e` | passed: 9 Playwright journeys |
+| New unit coverage | `libs/server/src/messaging/__tests__/secrets.spec.ts`: reference resolution and the fail-closed lookup |
+| New integration coverage | `webhook-secrets.int-spec.ts` (process-wide secrets only without a bound reference; bound references never accept the process-wide values; an unresolved reference refuses verification and delivery and writes nothing; a repaired reference restores the connection); `surveys-launch.int-spec.ts` "Viewers never see draft surveys, in the list or by id" (list, `state=DRAFT`, archived drafts, detail, preview, results, breakdowns; Admin and Survey Manager unaffected); `reporting.int-spec.ts` adjusted so the unlaunched-survey results read is a Survey Manager's and a Viewer gets not-found; `auth-membership.int-spec.ts` "an invitation that expires while its acceptance waits for the organization lock is refused" (lock held by another transaction, injected clock advanced past expiry while the acceptance waits on `pg_stat_activity`, `INVITATION_INVALID`, no membership) |
+
+Not run: nothing in this change touches the Meta adapter's outbound path, Cloud Tasks or Docker assets; live Meta and GCP verification remain external as before.
