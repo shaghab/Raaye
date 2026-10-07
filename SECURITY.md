@@ -17,7 +17,7 @@
 - Raaye is **not anonymous**. Authorized Admins can link answers to contacts; invitations say so. Aggregate views, the 5-respondent cohort threshold and result-sharing minimums reduce disclosure risk but do not guarantee anonymity.
 - Imported data is not consent. Permission has scope, source, evidence date, wording version and withdrawal history. It is rechecked right before every send. STOP overrides everything and cancels queued sends.
 - Logs, job payloads, URLs and audit metadata contain identifiers, never names, phone numbers or selected answers. No third-party analytics or tracking is included.
-- Raw import files are purged after 24 hours, raw webhook payloads after 7 days, quarantined payloads after 7 days.
+- Raw import files are dropped when processing ends and, together with the staged rows (normalized names and numbers, the row-error report), at the latest 24 hours after upload; raw webhook payloads are purged after 7 days, quarantined payloads after 7 days.
 - Exports are authenticated, served with `Cache-Control: no-store`, audited, and formula-neutralized (`= + - @` prefixes) to prevent spreadsheet injection; phone numbers are exported as text.
 - Surveys are archived, never deleted, to preserve research history. This is not a claim that personal data must be retained indefinitely; a separate approved privacy/erasure process may remove contact data.
 

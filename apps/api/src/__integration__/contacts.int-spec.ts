@@ -278,6 +278,91 @@ describe('contacts, consent and imports (R10-R14, R50)', () => {
     const purged = await request(t.server).post(`/api/v1/contact-imports/${stale.id}/confirm`).set('Authorization', manager.authorization).expect(409);
     expect(purged.body.message).toContain('expired');
     expect(await t.prisma.contact.count({ where: { organizationId: orgId, phoneE164: '+923002100009' } })).toBe(0);
+
+    // Staged rows of stopped and finished batches are purged at the end of the window too, which ends the resume and the error report.
+    const stoppedCsv = 'name,phone\nPurged Pari,+923002100010\nBad Row,not-a-number\n';
+    const stopped = (await request(t.server).post('/api/v1/contact-imports').set('Authorization', manager.authorization).attach('file', Buffer.from(stoppedCsv), 'stopped.csv').expect(201)).body;
+    await request(t.server).post(`/api/v1/contact-imports/${stopped.id}/preview`).set('Authorization', manager.authorization).send(mapping).expect(200);
+    await t.prisma.importBatch.update({ where: { id: stopped.id }, data: { state: 'FAILED', confirmedAt: t.clock.now(), errorMessage: 'connection terminated unexpectedly', rawBytes: null, rawExpiresAt: new Date(t.clock.now().getTime() - 1000) } });
+    await request(t.server).get(`/api/v1/contact-imports/${stopped.id}/errors`).set('Authorization', manager.authorization).expect(200);
+    await t.prisma.importBatch.update({ where: { id: uploaded.id }, data: { rawExpiresAt: new Date(t.clock.now().getTime() - 1000) } });
+    await t.app.get(RetentionService).run();
+    for (const [id, state] of [[stopped.id, 'FAILED'], [uploaded.id, 'COMPLETED']] as const) {
+      const after = await t.prisma.importBatch.findUniqueOrThrow({ where: { id } });
+      expect(after.state).toBe(state);
+      expect(after.stagingPurgedAt).not.toBeNull();
+      expect(await t.prisma.importRow.count({ where: { batchId: id } })).toBe(0);
+    }
+    expect((await t.prisma.importBatch.findUniqueOrThrow({ where: { id: uploaded.id } })).summary).toMatchObject({ create: 3 });
+    const purgedDto = (await request(t.server).get(`/api/v1/contact-imports/${stopped.id}`).set('Authorization', manager.authorization).expect(200)).body;
+    expect(purgedDto.resumable).toBe(false);
+    expect(purgedDto.stagingPurgedAt).not.toBeNull();
+    expect((await request(t.server).post(`/api/v1/contact-imports/${stopped.id}/confirm`).set('Authorization', manager.authorization).expect(409)).body.message).toContain('expired');
+    const report = await request(t.server).get(`/api/v1/contact-imports/${stopped.id}/errors`).set('Authorization', manager.authorization).expect(409);
+    expect(report.body.code).toBe('IMPORT_STATE_INVALID');
+    expect(await t.prisma.contact.count({ where: { organizationId: orgId, phoneE164: '+923002100010' } })).toBe(0);
+  });
+
+  it('rows applied before the applied_at marker existed are not applied twice on resume (R11, R13)', async () => {
+    const existing = await Promise.all(
+      ['+923002200001', '+923002200002'].map(async (phone, index) => (await request(t.server).post('/api/v1/contacts').set('Authorization', manager.authorization).send({ name: `Legacy ${index + 1}`, phone }).expect(201)).body as { id: string }),
+    );
+    const csv = 'name,phone,city\nLegacy One,+923002200001,Lahore\nLegacy Two,+923002200002,Karachi\nLegacy Three,+923002200003,Multan\n';
+    const mapping = { columns: { name: 'name', phone: 'phone', city: 'city' }, defaultCountry: 'PK', duplicateMode: 'UPDATE_NON_EMPTY_FIELDS', consentAttestation: { scopes: ['SURVEY_INVITATIONS'], source: 'Signed forms', collectedAt: '2026-09-01T00:00:00Z', wordingVersion: 'v1', statement: true } };
+    const uploaded = (await request(t.server).post('/api/v1/contact-imports').set('Authorization', manager.authorization).attach('file', Buffer.from(csv), 'legacy.csv').expect(201)).body;
+    const preview = (await request(t.server).post(`/api/v1/contact-imports/${uploaded.id}/preview`).set('Authorization', manager.authorization).send(mapping).expect(200)).body;
+    expect(preview.batch.summary).toMatchObject({ create: 1, update: 2, error: 0 });
+    const first = (await request(t.server).post(`/api/v1/contact-imports/${uploaded.id}/confirm`).set('Authorization', manager.authorization).expect(200)).body;
+    expect(first.summary).toMatchObject({ create: 1, update: 2, skip: 0, error: 0 });
+    const contactIds = [...existing.map((contact) => contact.id), (await t.prisma.contact.findUniqueOrThrow({ where: { organizationId_phoneE164: { organizationId: orgId, phoneE164: '+923002200003' } } })).id];
+    expect(await t.prisma.consentEvent.count({ where: { contactId: { in: contactIds } } })).toBe(3);
+    // The batch as an upgrade would find it: in flight, every row applied, none stamped.
+    await t.prisma.importBatch.update({ where: { id: uploaded.id }, data: { state: 'CONFIRMED', completedAt: null } });
+    await t.prisma.importRow.updateMany({ where: { batchId: uploaded.id }, data: { appliedAt: null } });
+    expect((await request(t.server).get(`/api/v1/contact-imports/${uploaded.id}`).set('Authorization', manager.authorization).expect(200)).body.resumable).toBe(true);
+    const resumed = (await request(t.server).post(`/api/v1/contact-imports/${uploaded.id}/confirm`).set('Authorization', manager.authorization).expect(200)).body;
+    expect(resumed.state).toBe('COMPLETED');
+    expect(resumed.summary).toMatchObject({ totalRows: 3, create: 1, update: 2, skip: 0, error: 0 });
+    // Nothing was applied twice: no extra consent evidence, no reclassified rows, every row stamped.
+    expect(await t.prisma.consentEvent.count({ where: { contactId: { in: contactIds } } })).toBe(3);
+    expect(await t.prisma.importRow.count({ where: { batchId: uploaded.id, appliedAt: { not: null } } })).toBe(3);
+    expect(await t.prisma.importRow.count({ where: { batchId: uploaded.id, status: 'SKIP' } })).toBe(0);
+    const completion = await t.prisma.auditEvent.findFirst({ where: { organizationId: orgId, resourceId: uploaded.id, action: 'import.completed' }, orderBy: { createdAt: 'desc' } });
+    expect(completion?.metadata).toMatchObject({ created: 0, updated: 0, alreadyApplied: 3 });
+  });
+
+  it('a failure in one of two concurrent runs never marks a batch failed that the other run completed (R11)', async () => {
+    const csv = ['name,phone', ...Array.from({ length: 4 }, (_, index) => `Race ${index + 1},+92300230000${index + 1}`)].join('\n');
+    const mapping = { columns: { name: 'name', phone: 'phone' }, defaultCountry: 'PK', duplicateMode: 'SKIP_EXISTING', consentAttestation: { scopes: ['SURVEY_INVITATIONS'], source: 'Signed forms', collectedAt: '2026-09-01T00:00:00Z', wordingVersion: 'v1', statement: true } };
+    const uploaded = (await request(t.server).post('/api/v1/contact-imports').set('Authorization', manager.authorization).attach('file', Buffer.from(csv), 'race.csv').expect(201)).body;
+    await request(t.server).post(`/api/v1/contact-imports/${uploaded.id}/preview`).set('Authorization', manager.authorization).send(mapping).expect(200);
+    await t.prisma.importBatch.update({ where: { id: uploaded.id }, data: { state: 'CONFIRMED', confirmedAt: t.clock.now() } });
+    const consent = t.app.get(ConsentService);
+    const applyEvents = consent.applyEvents.bind(consent);
+    let grants = 0;
+    const outage = jest.spyOn(consent, 'applyEvents').mockImplementation(async (tx, contactId, events) => {
+      grants += 1;
+      if (grants === 2) throw new Error('connection terminated unexpectedly');
+      return applyEvents(tx, contactId, events);
+    });
+    // Whichever run hits the outage rolls its chunk back; the other applies every row and completes the batch.
+    const responses = await Promise.all([
+      request(t.server).post(`/api/v1/contact-imports/${uploaded.id}/confirm`).set('Authorization', manager.authorization),
+      request(t.server).post(`/api/v1/contact-imports/${uploaded.id}/confirm`).set('Authorization', manager.authorization),
+    ]);
+    outage.mockRestore();
+    const statuses = responses.map((response) => response.status).sort();
+    expect([[200, 200], [200, 500]]).toContainEqual(statuses);
+    expect(responses.some((response) => response.status === 200 && response.body.state === 'COMPLETED')).toBe(true);
+    for (const response of responses) if (response.status === 500) expect(response.body.code).toBe('IMPORT_PROCESSING_FAILED');
+    const final = await t.prisma.importBatch.findUniqueOrThrow({ where: { id: uploaded.id } });
+    expect(final).toMatchObject({ state: 'COMPLETED', errorMessage: null });
+    expect(final.summary).toMatchObject({ totalRows: 4, create: 4, update: 0, skip: 0, error: 0 });
+    const contacts = await t.prisma.contact.findMany({ where: { organizationId: orgId, phoneE164: { startsWith: '+9230023' } }, select: { id: true } });
+    expect(contacts).toHaveLength(4);
+    expect(await t.prisma.consentEvent.count({ where: { contactId: { in: contacts.map((contact) => contact.id) } } })).toBe(4);
+    expect(await t.prisma.importRow.count({ where: { batchId: uploaded.id, appliedAt: { not: null } } })).toBe(4);
+    expect(await t.prisma.auditEvent.count({ where: { organizationId: orgId, resourceId: uploaded.id, action: 'import.completed' } })).toBe(1);
   });
 
   it('rejects future-dated consent evidence from attestations and rows (R12, R14)', async () => {

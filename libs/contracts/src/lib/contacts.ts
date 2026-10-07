@@ -280,6 +280,8 @@ export interface ImportBatchDto {
   resumable: boolean;
   hasConsentAttestation: boolean;
   rawExpiresAt: string;
+  /** When the retention sweep deleted the staged rows (error report and resume are gone from then on). */
+  stagingPurgedAt: string | null;
   previewedAt: string | null;
   confirmedAt: string | null;
   completedAt: string | null;

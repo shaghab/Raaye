@@ -38,9 +38,9 @@ const PREVIEW_ROWS = 200;
 const CHUNK = 200;
 const EMPTY_SUMMARY: ImportSummaryDto = { totalRows: 0, create: 0, update: 0, skip: 0, error: 0, consentGrantedRows: 0, withdrawnProtected: 0 };
 
-/** A batch whose processing stopped can continue while its staged rows are within the retention window. */
-function isResumable(batch: Pick<ImportBatch, 'state' | 'rawExpiresAt'>, now: Date): boolean {
-  return (batch.state === 'CONFIRMED' || batch.state === 'FAILED') && batch.rawExpiresAt.getTime() > now.getTime();
+/** A batch whose processing stopped can continue while its staged rows are still there and within the retention window. */
+function isResumable(batch: Pick<ImportBatch, 'state' | 'rawExpiresAt' | 'stagingPurgedAt'>, now: Date): boolean {
+  return (batch.state === 'CONFIRMED' || batch.state === 'FAILED') && batch.stagingPurgedAt === null && batch.rawExpiresAt.getTime() > now.getTime();
 }
 
 function toBatchDto(batch: ImportBatch, now: Date): ImportBatchDto {
@@ -60,6 +60,7 @@ function toBatchDto(batch: ImportBatch, now: Date): ImportBatchDto {
     resumable: isResumable(batch, now),
     hasConsentAttestation: Boolean(batch.consentAttestation),
     rawExpiresAt: batch.rawExpiresAt.toISOString(),
+    stagingPurgedAt: batch.stagingPurgedAt?.toISOString() ?? null,
     previewedAt: batch.previewedAt?.toISOString() ?? null,
     confirmedAt: batch.confirmedAt?.toISOString() ?? null,
     completedAt: batch.completedAt?.toISOString() ?? null,
@@ -289,6 +290,7 @@ export class ImportService {
     const failures: ImportRowErrorDto[] = [];
     let created = 0;
     let updated = 0;
+    let alreadyApplied = 0;
     try {
       for (let i = 0; i < pending.length; i += CHUNK) {
         const chunkIds = pending.slice(i, i + CHUNK).map((row) => row.id);
@@ -311,6 +313,12 @@ export class ImportService {
             }
             try {
               if (row.status === 'CREATE') {
+                if (row.contactId) {
+                  // Applied before the marker existed (a CREATE row only carries a contact once it was created).
+                  await tx.importRow.update({ where: { id: row.id }, data: { appliedAt: processedAt } });
+                  alreadyApplied += 1;
+                  continue;
+                }
                 const existing = await tx.contact.findUnique({ where: { organizationId_phoneE164: { organizationId: ctx.organizationId, phoneE164: normalized.phoneE164 } } });
                 if (existing) {
                   await tx.importRow.update({ where: { id: row.id }, data: { status: 'SKIP', contactId: existing.id, appliedAt: processedAt } });
@@ -325,6 +333,12 @@ export class ImportService {
                 const existing = row.contactId ? await tx.contact.findUnique({ where: { id: row.contactId } }) : null;
                 if (!existing) {
                   await this.markRow(tx, row.id, processedAt, 'ERROR', [{ rowNumber: row.rowNumber, field: 'phone', message: 'The matched contact no longer exists; preview the import again' }]);
+                  continue;
+                }
+                if (existing.importBatchId === batch.id) {
+                  // Applied before the marker existed: the contact already records this batch as its last import.
+                  await tx.importRow.update({ where: { id: row.id }, data: { appliedAt: processedAt } });
+                  alreadyApplied += 1;
                   continue;
                 }
                 await tx.contact.update({ where: { id: existing.id }, data: this.updateData(existing, normalized, batch) });
@@ -344,36 +358,42 @@ export class ImportService {
           }
         });
       }
+      // Every row that was pending when this run started is applied now (by this run or a concurrent
+      // one), so the batch is complete even if a concurrent run recorded a failure meanwhile. The
+      // raw file is dropped here; the staged rows stay until the retention sweep purges them.
       const summary = await this.summarize(db, batch);
       const completedAt = this.clock.now();
       const completed = await db.importBatch.updateMany({
-        where: { id: batchId, state: 'CONFIRMED' },
-        data: { state: 'COMPLETED', completedAt, summary: asJson(summary), rawBytes: null, stagingPurgedAt: completedAt, errorMessage: null },
+        where: { id: batchId, state: { in: ['CONFIRMED', 'FAILED'] } },
+        data: { state: 'COMPLETED', completedAt, summary: asJson(summary), rawBytes: null, errorMessage: null },
       });
-      if (completed.count === 1) await this.audit.record(ctx, { action: 'import.completed', resourceType: 'import_batch', resourceId: batchId, metadata: { created, updated, failures: failures.length } });
+      if (completed.count === 1) await this.audit.record(ctx, { action: 'import.completed', resourceType: 'import_batch', resourceId: batchId, metadata: { created, updated, alreadyApplied, failures: failures.length } });
       return toBatchDto(await db.importBatch.findUniqueOrThrow({ where: { id: batchId } }), completedAt);
     } catch (error) {
       // The first line of the message names the failure without echoing row data; the log gets only the error kind.
       const reason = error instanceof Error ? (error.message.split('\n')[0] ?? '').trim().slice(0, 200) || error.name : 'Import failed';
       this.logger.error({ batchId, errorKind: error instanceof Error ? error.name : typeof error, created, updated }, 'Import processing stopped');
       let summary: ImportSummaryDto;
+      let settled: ImportBatch;
       try {
-        // Record the failure with what was applied so far.
+        // Record the failure with what was applied so far, unless a concurrent run settled the batch.
         summary = await this.summarize(db, batch);
-        await db.importBatch.updateMany({
+        const failed = await db.importBatch.updateMany({
           where: { id: batchId, state: 'CONFIRMED' },
-          data: { state: 'FAILED', errorMessage: reason, summary: asJson(summary), rawBytes: null, stagingPurgedAt: this.clock.now() },
+          data: { state: 'FAILED', errorMessage: reason, summary: asJson(summary), rawBytes: null },
         });
-        await this.audit.record(ctx, { action: 'import.failed', resourceType: 'import_batch', resourceId: batchId, metadata: { created, updated, failures: failures.length } });
+        if (failed.count === 1) await this.audit.record(ctx, { action: 'import.failed', resourceType: 'import_batch', resourceId: batchId, metadata: { created, updated, alreadyApplied, failures: failures.length } });
+        settled = await db.importBatch.findUniqueOrThrow({ where: { id: batchId } });
       } catch (recording) {
         // The database is unreachable: the batch stays CONFIRMED and the next confirmation resumes it.
         this.logger.error({ batchId, err: recording instanceof Error ? recording.message : String(recording) }, 'Import failure could not be recorded');
         throw error;
       }
+      if (settled.state === 'COMPLETED') return toBatchDto(settled, this.clock.now());
       throw new DomainError(
         'IMPORT_PROCESSING_FAILED',
         'The import stopped before every row was applied. Rows already imported are kept; confirm the import again to continue with the remaining rows, or download the error report.',
-        { batchId, state: 'FAILED', errorMessage: reason, summary },
+        { batchId, state: settled.state, errorMessage: settled.errorMessage ?? reason, summary: (settled.summary as ImportSummaryDto | null) ?? summary },
       );
     }
   }
@@ -422,6 +442,7 @@ export class ImportService {
     const db = this.dbFactory.for(ctx);
     const batch = await db.importBatch.findUnique({ where: { id: batchId } });
     if (!batch) throw notFound('Import');
+    if (batch.stagingPurgedAt) throw new DomainError('IMPORT_STATE_INVALID', 'The staged rows of this import were purged at the end of the staging window; the error report is no longer available', { batchId });
     const rows = await db.importRow.findMany({ where: { batchId, status: 'ERROR' }, orderBy: { rowNumber: 'asc' } });
     const lines: (string | number)[][] = [['row_number', 'field', 'message']];
     for (const row of rows) {

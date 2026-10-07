@@ -83,7 +83,7 @@ function guessField(header: string): ImportField | '' {
         <mat-card-content>
           <mat-stepper [linear]="false" #stepper>
             <mat-step label="Upload" [completed]="!!batch()">
-              <p class="muted">CSV or XLSX, up to 5 MB and 10,000 rows. Name and phone columns are required. The raw file is kept for 24 hours only.</p>
+              <p class="muted">CSV or XLSX, up to 5 MB and 10,000 rows. Name and phone columns are required. The raw file and the staged rows (including the row-error report) are kept for 24 hours only.</p>
               <input type="file" accept=".csv,.xlsx" (change)="onFile($event)" data-testid="import-file" />
               @if (uploading()) { <p>Uploading…</p> }
               @if (batch(); as b) {
@@ -195,7 +195,7 @@ function guessField(header: string): ImportField | '' {
                 <div class="row">
                   @if (r.resumable) { <button mat-flat-button type="button" [disabled]="confirming()" (click)="resume(r.id)" data-testid="import-resume">Resume import</button> }
                   <a mat-flat-button routerLink="/contacts">Go to contacts</a>
-                  @if ((r.summary?.error ?? 0) > 0) { <button mat-stroked-button type="button" (click)="downloadErrors(r.id)">Error report</button> }
+                  @if ((r.summary?.error ?? 0) > 0 && !r.stagingPurgedAt) { <button mat-stroked-button type="button" (click)="downloadErrors(r.id)">Error report</button> }
                 </div>
               }
             </mat-step>
@@ -214,7 +214,7 @@ function guessField(header: string): ImportField | '' {
                 <ng-container matColumnDef="when"><th mat-header-cell *matHeaderCellDef>Uploaded</th><td mat-cell *matCellDef="let b">{{ b.createdAt | dt }}</td></ng-container>
                 <ng-container matColumnDef="actions"><th mat-header-cell *matHeaderCellDef></th><td mat-cell *matCellDef="let b">
                   @if (b.resumable) { <button mat-button type="button" [disabled]="confirming()" (click)="resume(b.id)">Resume</button> }
-                  @if ((b.summary?.error ?? 0) > 0 && b.state !== 'EXPIRED') { <button mat-button type="button" (click)="downloadErrors(b.id)">Errors</button> }
+                  @if ((b.summary?.error ?? 0) > 0 && !b.stagingPurgedAt) { <button mat-button type="button" (click)="downloadErrors(b.id)">Errors</button> }
                 </td></ng-container>
                 <tr mat-header-row *matHeaderRowDef="historyColumns"></tr>
                 <tr mat-row *matRowDef="let row; columns: historyColumns"></tr>
