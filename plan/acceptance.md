@@ -8,7 +8,7 @@ Status legend: **Done** = implemented with the listed evidence; **Done (local)**
 | R02 | Restart preserves user data and stable seed identities | Idempotent `SeedService` (`libs/server/src/seed/seed.service.ts`), persistent `raaye-db` volume | Seed re-run report (`skipped` list), `scripts/docker-smoke.ts` restart check | Done (local) |
 | R03 | Login, logout, reset, invitation acceptance | `apps/web/src/app/features/auth/*`, `staff-invitations.controller.ts`, `OrganizationService.createInvitation/acceptInvitation` | E2E `auth-and-roles.spec.ts`; integration `auth-membership.int-spec.ts` ("invitations are single-use…") | Done |
 | R04 | Role matrix enforced server-side | `AuthGuard`, `@Roles`, controllers | Integration `auth-membership.int-spec.ts`, `reporting.int-spec.ts` ("only Admin can read identifiable answers"), E2E viewer journey | Done |
-| R05 | Membership revocation immediate; last Admin protected | `OrganizationService.updateMember/revokeMember` | Integration `auth-membership.int-spec.ts` | Done |
+| R05 | Membership revocation immediate; last Admin protected | `OrganizationService.updateMember/revokeMember` (organization row lock serializes the check and the mutation) | Integration `auth-membership.int-spec.ts` ("concurrent Admin downgrades cannot remove the last Admin") | Done |
 | R06 | Only Admin sees identifiable answers/exports; audited | `ReportingController` role guards, `AuditService` | Integration `reporting.int-spec.ts` (403 for Manager/Viewer, audit without PII) | Done |
 | R07 | Two-tenant isolation across API, jobs, webhooks, exports | `createTenantDb` (`libs/server/src/persistence/tenant-db.ts`), composite FKs | Integration `tenant-constraints.int-spec.ts`, `contacts.int-spec.ts`, `conversation.int-spec.ts` (webhook quarantine), E2E tenant test | Done |
 | R08 | DB constraints prevent cross-tenant relations | `prisma/schema.prisma` `(organizationId, id)` uniques and composite FKs | Integration `tenant-constraints.int-spec.ts` | Done |
@@ -44,9 +44,9 @@ Status legend: **Done** = implemented with the listed evidence; **Done (local)**
 | R38 | Multiple surveys without cross-wiring | action bindings, continue/switch menu | Integration `conversation.int-spec.ts` | Done |
 | R39 | HELP/EDIT/PROFILE/RESULTS commands | `parseCommand`, `ConversationService` | Unit `commands.spec.ts`; integration conversation tests | Done |
 | R40 | Raw webhook signature verification, batch processing | `verifyWebhookSignature`, `parseMetaWebhook`, `WebhooksController` | Unit `meta-contract.spec.ts`; integration `conversation.int-spec.ts` | Done (local) |
-| R41 | Inbox persisted before success; outbox atomic | `InboxService.ingest`, `DeliveryService.createMessage` in transactions | Integration conversation/launch tests | Done |
-| R42 | Duplicate events ignored | `providerMessageId` uniqueness | Integration `conversation.int-spec.ts` | Done |
-| R43 | Ambiguous send → UNKNOWN, explicit retry | `DeliveryService.send/retry` | Integration `surveys-launch.int-spec.ts`; seed fixture; dispatch UI | Done |
+| R41 | Inbox persisted before success; outbox atomic | `InboxService.ingest` (inbox row + job in one transaction), `DeliveryService.createMessage` in transactions | Integration `inbox.int-spec.ts`, conversation/launch tests | Done |
+| R42 | Duplicate events ignored | `providerMessageId` uniqueness; a duplicate of a pending row without a job re-enqueues processing | Integration `conversation.int-spec.ts`, `inbox.int-spec.ts` | Done |
+| R43 | Ambiguous send → UNKNOWN, explicit retry | `DeliveryService.send/retry`; Meta adapter classifies timeouts and post-transmission resets as UNKNOWN | Unit `meta-contract.spec.ts`; integration `surveys-launch.int-spec.ts`; seed fixture; dispatch UI | Done |
 | R44 | Unknown connection quarantined | `InboxService.resolveConnection/quarantine` | Integration `conversation.int-spec.ts` | Done |
 | R45 | No free-form outside the 24-hour window; templates don't open it | `evaluateSendPolicy`, `serviceWindowOpen` | Unit `policy.spec.ts`, `service-window.spec.ts` | Done |
 | R46 | Aggregates from canonical answers with correct denominators | `ReportingService.results` | Integration `reporting.int-spec.ts` (known dataset) | Done |
@@ -58,7 +58,7 @@ Status legend: **Done** = implemented with the listed evidence; **Done (local)**
 | R52 | Results outreach uses template outside window; View results returns snapshot | `SharingService`, `showResults` | Integration `reporting.int-spec.ts` | Done (local) |
 | R53 | Eligibility: real respondents, results permission, opt-outs | `SharingService.preview` | Integration `reporting.int-spec.ts` | Done |
 | R54 | Small-sample questions withheld; single broadcast | `SharingService` | Integration `reporting.int-spec.ts` | Done |
-| R55 | Cloud Tasks / Scheduler task handlers with service identity | `InternalController`, `InternalTaskGuard`, `CloudTasksAdapter` | Unit `cloud-tasks.spec.ts`; integration `internal.int-spec.ts` | Done (local; OIDC path untested against Google) |
+| R55 | Cloud Tasks / Scheduler task handlers with service identity | `InternalController`, `InternalTaskGuard`, `CloudTasksAdapter`, `JobsService.pushDue` (hand-off after enqueue and on every sweep, `pushed_at` tracking) | Unit `cloud-tasks.spec.ts`; integration `internal.int-spec.ts`, `jobs-push.int-spec.ts` | Done (local; OIDC path and the live queue untested against Google) |
 | R56 | Retention cleanup | `RetentionService` | Integration `reporting.int-spec.ts` (retention test) | Done |
 | R57 | Live configuration fails closed; synthetic contacts never sent live | `loadConfig`, `evaluateSendPolicy` | Unit `env.spec.ts`, `policy.spec.ts` | Done |
 | R58 | Audit of sensitive actions without PII | `AuditService` | Integration `reporting.int-spec.ts`, `contacts.int-spec.ts` | Done |

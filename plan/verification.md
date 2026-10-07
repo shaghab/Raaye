@@ -8,8 +8,8 @@ What actually ran for this build, with outcomes. Environment: Linux sandbox, Nod
 | --- | --- | --- |
 | Lint (7 projects) | `pnpm lint` | passed |
 | Strict typecheck (apps, libs, test files, e2e) | `pnpm typecheck` | passed |
-| Unit tests | `pnpm test` | passed: contracts 4, domain 36, server 14, web 6 (60 tests) |
-| Integration tests (real PostgreSQL) | `pnpm test:integration` | passed: 8 suites, 48 tests |
+| Unit tests | `pnpm test` | passed: contracts 4, domain 36, server 15, web 6 (61 tests) |
+| Integration tests (real PostgreSQL) | `pnpm test:integration` | passed: 10 suites, 53 tests |
 | WhatsApp asset validation | `pnpm whatsapp:validate` | passed: 8 checks (3 Flows, 3 fixtures, 2 template specs) |
 | Production builds (api, worker, web) | `pnpm build` | passed; web initial bundle 658 kB raw / 161 kB transfer |
 | All of the above in one run | `pnpm verify` | passed (lint 11 s, typecheck 27 s, unit 11 s, integration 50 s, assets 2 s, builds 25 s) |
@@ -22,19 +22,21 @@ What actually ran for this build, with outcomes. Environment: Linux sandbox, Nod
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
-| `auth-membership.int-spec.ts` | 5 | token verification, membership resolution, role matrix, invitations, last-admin protection, revocation (R03-R06, R09) |
+| `auth-membership.int-spec.ts` | 6 | token verification, membership resolution, role matrix, invitations, last-admin protection including concurrent downgrade/revoke requests, revocation (R03-R06, R09) |
 | `tenant-constraints.int-spec.ts` | 3 | composite foreign keys and unique constraints, scoped client refusing foreign organizations (R07, R08) |
 | `contacts.int-spec.ts` | 8 | contact CRUD, same phone in two organizations, consent evidence and withdrawal, groups/tags, CSV/XLSX import with attestation and invalid rows, export neutralization (R10-R14, R50) |
 | `surveys-launch.int-spec.ts` | 11 | authoring validation, audience freeze, launch idempotency, scheduling, unschedule, activation/closing jobs, STOP cancelling queued sends, ambiguous send and explicit retry (R15, R21, R23-R29, R43) |
 | `conversation.int-spec.ts` | 11 | Start/intro/profile offer, buttons/list/Flow answers, edit window with injected clock, multi-select validation, resume/switch between surveys, enrollment of unknown senders, STOP/HELP/EDIT commands, duplicate webhooks, signed raw webhook ingress and quarantine (R16-R20, R31-R42, R44) |
 | `reporting.int-spec.ts` | 6 | aggregates with known dataset, breakdowns on frozen profiles with threshold, Admin-only responses with audit, CSV/XLSX exports parsed and checked, result sharing snapshot/template/`View results`/revoke, retention cleanup (R06, R30, R46-R54, R56, R58) |
 | `internal.int-spec.ts` | 2 | service-identity guard, idempotent job execution and sweep routes (R55) |
+| `jobs-push.int-spec.ts` | 2 | Cloud Tasks hand-off of pending jobs, scheduled tasks, re-push after retry, rejected pushes left for the sweep, inert under the postgres driver (R55) |
+| `inbox.int-spec.ts` | 2 | inbox row and processing job commit together; duplicate delivery re-enqueues an orphaned pending row (R41, R42) |
 | `scale.int-spec.ts` | 1 | 1,000-contact launch and restart during dispatch (R59) |
 
 ## Unit suites
 
 - `libs/domain/src/lib/__tests__/*` (36): edit windows, scheduling, commands, consent derivation, service window, age bands, demographics, question/renderer rules, aggregates, CSV, spreadsheet neutralization, phone normalization, import rules, tokens, results text.
-- `libs/server/src/**/__tests__/*` (14): Meta webhook contract (raw-byte signatures, batched parsing, Flow response bounds), Meta send payloads and error classification, send policy gate, configuration validation (fail-closed live mode), Cloud Tasks adapter.
+- `libs/server/src/**/__tests__/*` (15): Meta webhook contract (raw-byte signatures, batched parsing, Flow response bounds), Meta send payloads and error classification including post-transmission resets as ambiguous sends, send policy gate, configuration validation (fail-closed live mode), Cloud Tasks adapter.
 - `libs/contracts/src/lib/__tests__/schemas.spec.ts` (4): question/audience/query/launch/organization schemas.
 - `apps/web/src/app/**/*.spec.ts` (6): formatting helpers, API error mapping, chip component rendering.
 
@@ -66,3 +68,7 @@ Screens exercised in a browser against both the dev server and the Docker/nginx 
 - Node slim images lack the `openssl` binary; Prisma prints an OpenSSL detection warning in the `bootstrap` container but migrations apply correctly.
 - The Angular dev server (`nx serve web`) takes 60-90 s to start on first run; Playwright waits up to 240 s.
 - The `jobs` table "dead jobs" counter on the overview counts permanently failed send jobs, which the seed creates deliberately as a diagnostics fixture.
+
+## Review round 1 (Codex, commit 596ac4c)
+
+Four P1 findings were fixed with regression tests and one P2 finding was tracked as a GitHub issue; see `plan/review-state.json`. After the fixes: `pnpm lint` passed, `pnpm typecheck` passed, server unit tests 15 passed, integration suite 10 suites / 53 tests passed.
