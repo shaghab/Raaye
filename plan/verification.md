@@ -8,7 +8,7 @@ What actually ran for this build, with outcomes. Environment: Linux sandbox, Nod
 | --- | --- | --- |
 | Lint (7 projects) | `pnpm lint` | passed |
 | Strict typecheck (apps, libs, test files, e2e) | `pnpm typecheck` | passed |
-| Unit tests | `pnpm test` | passed: contracts 4, domain 36, server 15, web 6 (61 tests) |
+| Unit tests | `pnpm test` | passed: contracts 4, domain 36, server 16, web 6 (62 tests) |
 | Integration tests (real PostgreSQL) | `pnpm test:integration` | passed: 10 suites, 53 tests |
 | WhatsApp asset validation | `pnpm whatsapp:validate` | passed: 8 checks (3 Flows, 3 fixtures, 2 template specs) |
 | Production builds (api, worker, web) | `pnpm build` | passed; web initial bundle 658 kB raw / 161 kB transfer |
@@ -72,3 +72,7 @@ Screens exercised in a browser against both the dev server and the Docker/nginx 
 ## Review round 1 (Codex, commit 596ac4c)
 
 Four P1 findings were fixed with regression tests and one P2 finding was tracked as a GitHub issue; see `plan/review-state.json`. After the fixes: `pnpm lint` passed, `pnpm typecheck` passed, server unit tests 15 passed, integration suite 10 suites / 53 tests passed.
+
+## Review round 2 (Codex, commit 8c1ed4f)
+
+Three P1 findings were fixed with regression tests (audience filter composition, phone-change window reset, per-connection access token) and three P2 findings were tracked as GitHub issues #5, #6 and #7. After the fixes: `pnpm lint` passed, `pnpm typecheck` passed, server unit tests 16 passed, integration suite 10 suites / 53 tests passed.

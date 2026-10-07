@@ -13,6 +13,15 @@
       "reviewId": 5439499431,
       "reviewedAt": "2026-10-07T08:17:22Z",
       "findings": 5
+    },
+    {
+      "headSha": "8c1ed4f",
+      "requestedAt": "2026-10-07T08:28:39.049907+00:00",
+      "status": "completed",
+      "round": 2,
+      "reviewId": 5439722008,
+      "reviewedAt": "2026-10-07T08:35:55Z",
+      "findings": 6
     }
   ],
   "processedFindings": [
@@ -69,7 +78,74 @@
       "title": "Replay statuses whose projection update failed",
       "action": "tracked",
       "issue": "https://github.com/shaghab/Raaye/issues/4",
-      "resolved": false
+      "resolved": true,
+      "replied": true
+    },
+    {
+      "reviewId": 5439722008,
+      "commentId": 4204782311,
+      "threadId": "PRRT_kwDOU--Sjc6p0lzp",
+      "priority": "P1",
+      "file": "libs/server/src/surveys/audience.service.ts",
+      "title": "Preserve occupation filters when composing audiences",
+      "action": "fixed",
+      "commit": "986e04c",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439722008,
+      "commentId": 4204782316,
+      "threadId": "PRRT_kwDOU--Sjc6p0lzs",
+      "priority": "P1",
+      "file": "libs/server/src/contacts/contacts.service.ts",
+      "title": "Reset the service window when changing phone numbers",
+      "action": "fixed",
+      "commit": "8cdc1de",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439722008,
+      "commentId": 4204782329,
+      "threadId": "PRRT_kwDOU--Sjc6p0lzy",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/meta.provider.ts",
+      "title": "Resolve the access token from the sender connection",
+      "action": "fixed",
+      "commit": "3e16ab3",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439722008,
+      "commentId": 4204782333,
+      "threadId": "PRRT_kwDOU--Sjc6p0lz0",
+      "priority": "P2",
+      "file": "libs/server/src/contacts/import.service.ts",
+      "title": "Resume imports left in the confirmed state",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/5",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439722008,
+      "commentId": 4204782342,
+      "threadId": "PRRT_kwDOU--Sjc6p0lz7",
+      "priority": "P2",
+      "file": "libs/server/src/contacts/import.service.ts",
+      "title": "Return an error when import processing fails",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/6",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439722008,
+      "commentId": 4204782354,
+      "threadId": "PRRT_kwDOU--Sjc6p0l0C",
+      "priority": "P2",
+      "file": "libs/server/src/surveys/launch.service.ts",
+      "title": "Make concurrent launch retries idempotent",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/7",
+      "resolved": true
     }
   ],
   "issues": [
@@ -78,8 +154,26 @@
       "url": "https://github.com/shaghab/Raaye/issues/4",
       "priority": "P2",
       "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204606612"
+    },
+    {
+      "number": 5,
+      "url": "https://github.com/shaghab/Raaye/issues/5",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204782333"
+    },
+    {
+      "number": 6,
+      "url": "https://github.com/shaghab/Raaye/issues/6",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204782342"
+    },
+    {
+      "number": 7,
+      "url": "https://github.com/shaghab/Raaye/issues/7",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204782354"
     }
   ],
   "blockers": [],
-  "updatedAt": "2026-10-07T08:28:10.397005+00:00"
+  "updatedAt": "2026-10-07T08:44:18.206958+00:00"
 }
