@@ -103,6 +103,15 @@
       "reviewId": 5441745989,
       "reviewedAt": "2026-10-07T11:42:41Z",
       "findings": 3
+    },
+    {
+      "headSha": "964f7d5",
+      "requestedAt": "2026-10-07T11:51:06.167046+00:00",
+      "status": "completed",
+      "round": 12,
+      "reviewId": 5441868889,
+      "reviewedAt": "2026-10-07T11:54:36Z",
+      "findings": 2
     }
   ],
   "processedFindings": [
@@ -524,6 +533,28 @@
       "action": "tracked",
       "issue": "https://github.com/shaghab/Raaye/issues/18",
       "resolved": true
+    },
+    {
+      "reviewId": 5441868889,
+      "commentId": 4206542599,
+      "threadId": "PRRT_kwDOU--Sjc6p47yq",
+      "priority": "P1",
+      "file": "libs/server/src/conversation/answer.service.ts",
+      "title": "Serialize answer writes with survey closure",
+      "action": "fixed",
+      "commit": "56b2580",
+      "resolved": true
+    },
+    {
+      "reviewId": 5441868889,
+      "commentId": 4206542607,
+      "threadId": "PRRT_kwDOU--Sjc6p47yu",
+      "priority": "P2",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Keep invitation failure state aligned with status promotion",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/19",
+      "resolved": true
     }
   ],
   "issues": [
@@ -616,8 +647,14 @@
       "url": "https://github.com/shaghab/Raaye/issues/18",
       "priority": "P2",
       "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4206436902"
+    },
+    {
+      "number": 19,
+      "url": "https://github.com/shaghab/Raaye/issues/19",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4206542607"
     }
   ],
   "blockers": [],
-  "updatedAt": "2026-10-07T11:50:52.844454+00:00"
+  "updatedAt": "2026-10-07T12:04:26.066102+00:00"
 }
