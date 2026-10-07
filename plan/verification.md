@@ -138,3 +138,28 @@ One P2 finding, on this file: the first version of the section above said that e
 ## Review round 15 (Codex, commit 2f871f3)
 
 Codex completed its review of 2f871f3 with no findings ("Didn't find any major issues", pull-request comment 6038069705). All 41 review threads are resolved: 25 P1 findings fixed with regression tests (rounds 1-12), 15 P2 findings tracked as GitHub issues #4-#12 and #14-#19, one P2 finding on this record corrected in the pull request (round 14), plus issue #13 for the first-organization bootstrap gap. The commit that records this outcome changes only `plan/` files and was not sent for a further review round.
+
+## Follow-up: first-organization bootstrap (issue #13)
+
+Branch restarted from the merged `main` (4bf2981). Checks run on the working tree that became this pull request:
+
+| Check | Result |
+| --- | --- |
+| `pnpm verify` | passed: lint 7 projects, strict typecheck 7 projects, unit tests 68 (contracts 4, domain 36, server 22, web 6), integration 12 suites / 73 tests, WhatsApp assets 8 checks, production builds |
+| `pnpm test:e2e` | passed: 9 Playwright journeys, including the new bootstrap journey (operator command through the worker bundle, acceptance link opened in the dashboard, account created in the Auth emulator with a chosen password, Admin sign-in, `organization.bootstrapped` visible in the audit log) |
+| Migration | `prisma migrate deploy` applied `20261007143000_bootstrap_invitations` to the test and development databases; `prisma migrate diff --from-config-datasource --to-schema` reports no drift |
+| CLI through the built worker bundle (`pnpm bootstrap:org -- ...`) | create: exit 0, JSON result with the link on stdout, structured log with ids only; re-run before acceptance: exit 0, `revokedInvitations: 1`; organization with an active Admin: exit 1 `BOOTSTRAP_REFUSED`; unknown option: exit 2 with usage; invalid slug/email/name: exit 1 with field errors; audit metadata holds no email |
+| Container entrypoint | `docker run raaye-app:local seed` previously failed with `exec: seed: not found`; after the entrypoint change `seed` and `bootstrap:org` reach the worker bundle (they stop at the configuration check when no database is configured, as expected) |
+| Docker smoke (`scripts/docker-smoke.ts --keep`) and `docker compose run --rm worker bootstrap:org ...` | passed: images rebuilt from this tree, bootstrap (migrate + seed, including the new migration), dashboard and API through nginx, emulator sign-in, restart persistence, seed idempotency; then `bootstrap:org` inside the Compose stack created an organization and printed its link (exit 0) and refused the seeded demo organization with `BOOTSTRAP_REFUSED` (exit 1); `docker compose down` completed |
+
+Not run: nothing in this change touches the Meta adapter, Cloud Tasks or the dashboard beyond the existing acceptance page, so live Meta and GCP verification remain external as before.
+
+## Review loop for pull request #20 (first-organization bootstrap)
+
+| Round | Commit | Outcome |
+| --- | --- | --- |
+| 1 (pull request opened) | 2f8f7e9 | P1: a re-run with a corrected Admin address left the earlier address's link valid. Fixed in 14740fd: a re-run revokes every pending bootstrap invitation of the organization; the integration test covers the corrected-address case. |
+| 2 | 14740fd | P1: invitation acceptance did not take the organization lock, so an acceptance racing a re-run could leave a second valid Admin link. Fixed in c90ff93: acceptance locks the organization row before consuming the invitation; a gated integration test interleaves a re-run and an acceptance and fails with a 500 without the lock. |
+| 3 | c90ff93 | P2: the acceptance compares expiry against a clock reading taken before the lock wait. Tracked as issue #21, not implemented. |
+
+All three review threads are resolved. After the fixes, on the tree of c90ff93: `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 68, integration 12 suites / 74 tests, WhatsApp assets 8 checks, production builds); `pnpm test:e2e` passed (9 journeys). The commit that records this outcome changes only `plan/` files and was not sent for a further round.

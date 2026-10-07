@@ -1,5 +1,5 @@
 /**
- * Runs an operational command (seed, seed:scale, sweep, run-once, retention) through the
+ * Runs an operational command (seed, seed:scale, sweep, run-once, retention, bootstrap:org) through the
  * built worker bundle so Nest decorator metadata is available. Usage: tsx scripts/run-cli.ts seed
  */
 import { spawnSync } from 'node:child_process';
@@ -9,7 +9,7 @@ import path from 'node:path';
 const root = path.resolve(__dirname, '..');
 const command = process.argv[2];
 if (!command) {
-  console.error('Usage: run-cli <seed|seed:scale|sweep|run-once|retention> [args]');
+  console.error('Usage: run-cli <seed|seed:scale|sweep|run-once|retention|bootstrap:org> [args]');
   process.exit(2);
 }
 if (!existsSync(path.join(root, '.env')) && !process.env['DATABASE_URL']) {

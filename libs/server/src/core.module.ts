@@ -6,6 +6,7 @@ import { AppClock, CLOCK } from './clock/clock.service';
 import { ConfigModule } from './config/config.module';
 import { APP_CONFIG, type AppConfig } from './config/env';
 import { HealthService } from './health/health.service';
+import { OrganizationBootstrapService } from './organizations/bootstrap.service';
 import { OrganizationService } from './organizations/organization.service';
 import { PrismaService } from './persistence/prisma.service';
 import { TenantDbFactory } from './persistence/tenant-db.factory';
@@ -40,6 +41,7 @@ export class CoreModule {
         },
         AuthService,
         OrganizationService,
+        OrganizationBootstrapService,
         HealthService,
       ],
       exports: [
@@ -52,6 +54,7 @@ export class CoreModule {
         TOKEN_VERIFIER,
         AuthService,
         OrganizationService,
+        OrganizationBootstrapService,
         HealthService,
       ],
     };

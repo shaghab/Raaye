@@ -234,6 +234,10 @@ export class OrganizationService {
     }
     const now = this.clock.now();
     await this.prisma.$transaction(async (tx) => {
+      // The organization row lock serializes acceptance with bootstrap re-runs and member administration:
+      // a re-run's active-Admin count and the membership created here cannot interleave, and both paths
+      // take the organization lock before touching invitations, so they never deadlock on each other.
+      await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${invitation.organizationId}::uuid FOR UPDATE`;
       const consumed = await tx.staffInvitation.updateMany({
         where: { id: invitation.id, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
         data: { acceptedAt: now },

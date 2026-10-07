@@ -22,6 +22,7 @@
     "db:migrate:dev": "prisma migrate dev",
     "db:reset": "tsx --tsconfig tsconfig.base.json scripts/db-reset.ts",
     "db:seed": "tsx --tsconfig tsconfig.base.json scripts/run-cli.ts seed",
+    "bootstrap:org": "tsx --tsconfig tsconfig.base.json scripts/run-cli.ts bootstrap:org",
     "seed:scale": "tsx --tsconfig tsconfig.base.json scripts/run-cli.ts seed:scale",
     "verify": "tsx --tsconfig tsconfig.base.json scripts/verify.ts",
     "whatsapp:validate": "tsx --tsconfig tsconfig.base.json scripts/whatsapp-validate.ts",
