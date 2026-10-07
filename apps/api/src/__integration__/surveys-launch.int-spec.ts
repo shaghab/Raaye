@@ -113,6 +113,15 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     expect(managerOverview.recent.some((item: { id: string }) => item.id === draftId)).toBe(true);
     const archivedDrafts = await t.prisma.survey.count({ where: { organizationId: orgId, archivedAt: { not: null }, state: 'DRAFT' } });
     expect(viewerOverview.surveys.archived).toBe(managerOverview.surveys.archived - archivedDrafts);
+    // A draft's test run whose dispatch is blocked is listed for the Survey Manager but never for the Viewer.
+    await request(t.server).post(`/api/v1/surveys/${draftId}/test-runs`).set('Authorization', manager.authorization).send({ contactIds: [contacts['Ayesha']] }).expect(201);
+    await setConnectionEnabled(false);
+    await drainJobs(t);
+    const blockedIds = (page: { attention: { blockedRuns: { surveyId: string }[] } }) => page.attention.blockedRuns.map((run) => run.surveyId);
+    expect(blockedIds((await request(t.server).get('/api/v1/overview').set('Authorization', manager.authorization).expect(200)).body)).toContain(draftId);
+    expect(blockedIds((await request(t.server).get('/api/v1/overview').set('Authorization', viewer.authorization).expect(200)).body)).not.toContain(draftId);
+    await request(t.server).post(`/api/v1/surveys/${draftId}/archive`).set('Authorization', manager.authorization).expect(200);
+    await setConnectionEnabled(true);
   });
 
   it('enforces authoring limits and Admin-only timing (R20, matrix)', async () => {

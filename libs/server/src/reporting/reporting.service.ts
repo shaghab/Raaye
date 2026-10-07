@@ -276,7 +276,7 @@ export class ReportingService {
       db.survey.findMany({ where: { archivedAt: null, ...published }, orderBy: { updatedAt: 'desc' }, take: 6, include: { runs: { where: { kind: 'LIVE', state: { not: 'CANCELED' } }, take: 1 } } }),
       db.message.count({ where: { state: 'FAILED', isTest: false } }),
       db.message.count({ where: { state: 'UNKNOWN', isTest: false } }),
-      db.surveyRun.findMany({ where: { dispatchBlockReason: { not: null }, state: { in: ['SCHEDULED', 'ACTIVE'] } }, include: { survey: { select: { id: true, internalTitle: true } } } }),
+      db.surveyRun.findMany({ where: { dispatchBlockReason: { not: null }, state: { in: ['SCHEDULED', 'ACTIVE'] }, survey: published }, include: { survey: { select: { id: true, internalTitle: true } } } }),
       db.job.count({ where: { status: 'FAILED' } }),
     ]);
     const recent = [] as OverviewDto['recent'];
