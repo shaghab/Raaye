@@ -9,7 +9,7 @@ What actually ran for this build, with outcomes. Environment: Linux sandbox, Nod
 | Lint (7 projects) | `pnpm lint` | passed |
 | Strict typecheck (apps, libs, test files, e2e) | `pnpm typecheck` | passed |
 | Unit tests | `pnpm test` | passed: contracts 4, domain 36, server 18, web 6 (64 tests) |
-| Integration tests (real PostgreSQL) | `pnpm test:integration` | passed: 11 suites, 65 tests |
+| Integration tests (real PostgreSQL) | `pnpm test:integration` | passed: 11 suites, 66 tests |
 | WhatsApp asset validation | `pnpm whatsapp:validate` | passed: 8 checks (3 Flows, 3 fixtures, 2 template specs) |
 | Production builds (api, worker, web) | `pnpm build` | passed; web initial bundle 658 kB raw / 161 kB transfer |
 | All of the above in one run | `pnpm verify` | passed (lint 11 s, typecheck 27 s, unit 11 s, integration 50 s, assets 2 s, builds 25 s) |
@@ -97,3 +97,7 @@ Two P1 findings were fixed with regression tests (the provider hand-off now runs
 ## Review round 7 (Codex, commit 09d00d3)
 
 One P1 finding was fixed with a regression test (archiving now cancels active test runs and their queued sends) and one P2 finding was tracked as GitHub issue #17. After the fix: `pnpm lint` passed (7 projects), `pnpm typecheck` passed (7 projects), unit tests passed for 6 projects (server 18), integration suite 11 suites / 65 tests passed.
+
+## Review round 8 (Codex, commit 6f06ac3)
+
+One P1 finding was fixed with a regression test (the hand-off re-check judges deadlines on a clock reading taken after the contact lock is acquired). No lower-priority findings were raised. After the fix: `pnpm lint` passed (7 projects), `pnpm typecheck` passed (7 projects), unit tests passed for 6 projects (server 18), integration suite 11 suites / 66 tests passed.
