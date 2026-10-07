@@ -37,11 +37,17 @@ describe('first-organization bootstrap for live deployments (issue #13)', () => 
     expect(audits[0]?.metadata).toMatchObject({ organizationCreated: true, invitationId: first.invitationId, role: 'ADMIN' });
     expect(JSON.stringify(audits[0]?.metadata)).not.toContain('civic.org');
 
-    // A re-run before acceptance reuses the organization and replaces the pending link.
+    // A re-run before acceptance reuses the organization and replaces the pending link, including a link
+    // issued to a different address when the operator corrects the email.
+    const corrected = await service.bootstrap({ name: 'Civic Trust', slug: 'civic-trust', adminEmail: 'typo@civic.org' });
+    expect(corrected).toMatchObject({ organizationId: organization.id, organizationCreated: false, revokedInvitations: 1 });
+    const typoToken = new URL(corrected.acceptUrl).searchParams.get('token') ?? '';
+    await request(t.server).post('/api/v1/staff-invitations/inspect').send({ token: firstToken }).expect(422);
     const second = await service.bootstrap({ name: 'Civic Trust (renamed later)', slug: 'civic-trust', adminEmail: 'lead@civic.org' });
     expect(second).toMatchObject({ organizationId: organization.id, organizationCreated: false, revokedInvitations: 1 });
     expect((await t.prisma.organization.findUniqueOrThrow({ where: { id: organization.id } })).name).toBe('Civic Trust');
-    await request(t.server).post('/api/v1/staff-invitations/inspect').send({ token: firstToken }).expect(422);
+    await request(t.server).post('/api/v1/staff-invitations/inspect').send({ token: typoToken }).expect(422);
+    expect(await t.prisma.staffInvitation.count({ where: { organizationId: organization.id, revokedAt: null } })).toBe(1);
     const token = new URL(second.acceptUrl).searchParams.get('token') ?? '';
     const inspect = await request(t.server).post('/api/v1/staff-invitations/inspect').send({ token }).expect(200);
     expect(inspect.body).toMatchObject({ email: 'lead@civic.org', role: 'ADMIN', organizationName: 'Civic Trust', existingAccount: false });
@@ -59,8 +65,8 @@ describe('first-organization bootstrap for live deployments (issue #13)', () => 
 
     // With an active Admin the command refuses, even for another email, and changes nothing.
     await expect(service.bootstrap({ name: 'Civic Trust', slug: 'civic-trust', adminEmail: 'other@civic.org' })).rejects.toMatchObject({ code: 'BOOTSTRAP_REFUSED' });
-    expect(await t.prisma.staffInvitation.count({ where: { organizationId: organization.id } })).toBe(2);
-    expect(await t.prisma.auditEvent.count({ where: { organizationId: organization.id, action: 'organization.bootstrapped' } })).toBe(2);
+    expect(await t.prisma.staffInvitation.count({ where: { organizationId: organization.id } })).toBe(3);
+    expect(await t.prisma.auditEvent.count({ where: { organizationId: organization.id, action: 'organization.bootstrapped' } })).toBe(3);
 
     // Admin-issued invitations are not touched by a later bootstrap of an organization without an Admin.
     const other = await t.prisma.organization.create({ data: { name: 'Other', slug: 'other', participantNotice: 'n' } });

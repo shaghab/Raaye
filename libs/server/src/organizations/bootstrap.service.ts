@@ -44,7 +44,7 @@ export interface BootstrapResult {
   /** Single-use acceptance link; printed once and never stored in clear text. */
   acceptUrl: string;
   expiresAt: string;
-  /** Earlier bootstrap invitations for the same address that this run revoked. */
+  /** Pending bootstrap invitations of the organization, to any address, that this run revoked. */
   revokedInvitations: number;
 }
 
@@ -138,9 +138,10 @@ export class OrganizationBootstrapService {
           });
           organizationCreated = true;
         }
-        // A re-run before acceptance replaces the earlier bootstrap link; Admin-issued invitations are untouched.
+        // A re-run before acceptance replaces every pending bootstrap link, including one issued to a
+        // different address (an operator correcting the email); Admin-issued invitations are untouched.
         const revoked = await tx.staffInvitation.updateMany({
-          where: { organizationId: organization.id, email: input.adminEmail, invitedByUserId: null, acceptedAt: null, revokedAt: null },
+          where: { organizationId: organization.id, invitedByUserId: null, acceptedAt: null, revokedAt: null },
           data: { revokedAt: now },
         });
         const invitation = await tx.staffInvitation.create({
