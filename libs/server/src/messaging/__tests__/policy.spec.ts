@@ -6,6 +6,7 @@ const base: PolicyInput = {
   kind: 'INVITATION',
   isFreeForm: false,
   isTest: false,
+  connectionEnabled: true,
   contact: { archivedAt: null, consentInvitations: 'GRANTED', consentResults: 'GRANTED', isSynthetic: false },
   lastInboundAt: null,
   run: { state: 'ACTIVE', closesAt: new Date('2026-10-12T09:00:00Z') },
@@ -20,6 +21,12 @@ describe('sending policy gate (R15, R22, R45, R57)', () => {
   it('blocks synthetic contacts in live mode but not in mock mode', () => {
     expect(evaluateSendPolicy({ ...base, contact: { ...base.contact, isSynthetic: true } })).toEqual({ allowed: false, reason: 'SYNTHETIC_CONTACT' });
     expect(evaluateSendPolicy({ ...base, providerMode: 'mock', contact: { ...base.contact, isSynthetic: true } })).toEqual({ allowed: true });
+  });
+
+  it('never uses a sender the operator disabled, whatever the message kind', () => {
+    expect(evaluateSendPolicy({ ...base, connectionEnabled: false })).toEqual({ allowed: false, reason: 'CONNECTION_DISABLED' });
+    expect(evaluateSendPolicy({ ...base, connectionEnabled: false, kind: 'OPT_OUT_ACK', isFreeForm: true, lastInboundAt: base.now, run: null })).toEqual({ allowed: false, reason: 'CONNECTION_DISABLED' });
+    expect(evaluateSendPolicy({ ...base, connectionEnabled: false, providerMode: 'mock', isTest: true })).toEqual({ allowed: false, reason: 'CONNECTION_DISABLED' });
   });
 
   it('rechecks permission for the purpose at send time', () => {

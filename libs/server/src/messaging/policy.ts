@@ -6,6 +6,8 @@ export interface PolicyInput {
   kind: string;
   isFreeForm: boolean;
   isTest: boolean;
+  /** The organization-owned sender connection is enabled; a disabled sender blocks every kind. */
+  connectionEnabled: boolean;
   contact: { archivedAt: Date | null; consentInvitations: string; consentResults: string; isSynthetic: boolean };
   lastInboundAt: Date | null;
   run: { state: string; closesAt: Date } | null;
@@ -24,12 +26,13 @@ const TRANSACTIONAL_KINDS = new Set(['OPT_OUT_ACK', 'COMMAND_REPLY', 'ENROLLMENT
 
 /**
  * Sending policy gate evaluated immediately before every provider call. It rechecks
- * tenant/contact state, permission for the purpose, run deadlines, service-window versus
+ * tenant/contact state, the sender connection, permission for the purpose, run deadlines, service-window versus
  * template eligibility, required bindings and prior ambiguous attempts.
  */
 export function evaluateSendPolicy(input: PolicyInput): PolicyDecision {
   if (input.priorAcceptedAttempts > 0) return { allowed: false, reason: 'ALREADY_ACCEPTED' };
   if (input.priorUnknownAttempts > 0) return { allowed: false, reason: 'SEND_OUTCOME_UNKNOWN' };
+  if (!input.connectionEnabled) return { allowed: false, reason: 'CONNECTION_DISABLED' };
   if (input.providerMode === 'live' && input.contact.isSynthetic) return { allowed: false, reason: 'SYNTHETIC_CONTACT' };
   if (input.contact.archivedAt && !TRANSACTIONAL_KINDS.has(input.kind)) return { allowed: false, reason: 'CONTACT_ARCHIVED' };
   const proactive = PROACTIVE_KINDS.has(input.kind);

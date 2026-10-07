@@ -209,6 +209,8 @@ export class SimulatorService {
   private async emit(ctx: TenantContext, input: { senderIdentity: string; kind: NormalizedInbound['kind']; text: string | null; actionId: string | null; flowResponse: Record<string, unknown> | null; profileName: string | null; contextMessageId?: string | null }, providerMessageId?: string, offsetSeconds?: number): Promise<{ eventId: string | null; duplicate: boolean }> {
     const connection = await this.readiness.connection(ctx);
     if (!connection) throw notFound('Messaging connection');
+    // The live webhook only resolves enabled senders; the simulator refuses the same traffic.
+    if (!connection.enabled) throw new DomainError('CONNECTION_DISABLED', 'The messaging connection is disabled; enable it in Settings before simulating inbound messages');
     const id = providerMessageId ?? `wamid.sim.${randomUUID()}`;
     const inbound: NormalizedInbound = {
       phoneNumberId: connection.phoneNumberId ?? '',

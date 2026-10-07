@@ -130,6 +130,7 @@ export class DeliveryService implements JobHandler {
       kind: message.kind,
       isFreeForm: message.isFreeForm,
       isTest: message.isTest,
+      connectionEnabled: message.connection.enabled,
       contact: message.contact,
       lastInboundAt: conversation?.lastInboundAt ?? null,
       run: message.run && message.kind !== 'OPT_OUT_ACK' ? { state: message.run.state, closesAt: message.run.closesAt } : null,

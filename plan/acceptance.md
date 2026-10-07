@@ -25,7 +25,7 @@ Status legend: **Done** = implemented with the listed evidence; **Done (local)**
 | R19 | Rating 1-5 list | planner | Integration conversation tests; E2E journey | Done |
 | R20 | Participant-initiated enrollment with affirmative consent | `ConversationService.handleEnrollmentText/offerConsent` | Integration `conversation.int-spec.ts` ("unknown senders…") | Done |
 | R21 | STOP precedence, cancels pending sends | `handleStop`, `OutreachCancellation` | Integration `conversation.int-spec.ts`, `surveys-launch.int-spec.ts`; E2E STOP test | Done |
-| R22 | Missing template/Flow blocks live readiness explicitly | `MessagingReadinessService.check` | Unit `policy.spec.ts`, `env.spec.ts`; readiness UI | Done (local) |
+| R22 | Missing template/Flow blocks live readiness explicitly | `MessagingReadinessService.check` (templates, Flows, secrets, disabled connection) | Unit `policy.spec.ts`, `env.spec.ts`; integration `surveys-launch.int-spec.ts` ("a disabled messaging connection…"); readiness UI | Done (local) |
 | R23 | Survey authoring limits and validation | `surveyDraftSchema`, `SurveysService.contentErrors` | Integration `surveys-launch.int-spec.ts` | Done |
 | R24 | Audience modes, preview, freeze at launch | `AudienceService`, `LaunchService.launch` | Integration `surveys-launch.int-spec.ts` | Done |
 | R25 | Scheduling with durable jobs | `jobs` table, `ActivateSurveyHandler` | Integration `surveys-launch.int-spec.ts`, `internal.int-spec.ts` | Done |
@@ -46,7 +46,7 @@ Status legend: **Done** = implemented with the listed evidence; **Done (local)**
 | R40 | Raw webhook signature verification, batch processing | `verifyWebhookSignature`, `parseMetaWebhook`, `WebhooksController` | Unit `meta-contract.spec.ts`; integration `conversation.int-spec.ts` | Done (local) |
 | R41 | Inbox persisted before success; outbox atomic | `InboxService.ingest` (inbox row + job in one transaction), `DeliveryService.createMessage` in transactions | Integration `inbox.int-spec.ts`, conversation/launch tests | Done |
 | R42 | Duplicate events ignored | `providerMessageId` uniqueness; a duplicate of a pending row without a job re-enqueues processing | Integration `conversation.int-spec.ts`, `inbox.int-spec.ts` | Done |
-| R43 | Ambiguous send → UNKNOWN, explicit retry | `DeliveryService.send/retry`; Meta adapter classifies timeouts and post-transmission resets as UNKNOWN | Unit `meta-contract.spec.ts`; integration `surveys-launch.int-spec.ts`; seed fixture; dispatch UI | Done |
+| R43 | Ambiguous send → UNKNOWN, explicit retry | `DeliveryService.send/retry`; Meta adapter classifies timeouts and post-transmission resets as UNKNOWN | Unit `meta-contract.spec.ts`; integration `surveys-launch.int-spec.ts` (ambiguous sends, disabled-connection suppression and Admin retry); seed fixture; dispatch UI | Done |
 | R44 | Unknown connection quarantined | `InboxService.resolveConnection/quarantine` | Integration `conversation.int-spec.ts` | Done |
 | R45 | No free-form outside the 24-hour window; templates don't open it | `evaluateSendPolicy`, `serviceWindowOpen` | Unit `policy.spec.ts`, `service-window.spec.ts` | Done |
 | R46 | Aggregates from canonical answers with correct denominators | `ReportingService.results` | Integration `reporting.int-spec.ts` (known dataset) | Done |

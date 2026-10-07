@@ -1,4 +1,4 @@
-import { DeliveryService, JobRunner, createTenantDb } from '@raaye/server';
+import { DeliveryService, JobRunner, LaunchService, createTenantDb } from '@raaye/server';
 import request from 'supertest';
 import { drainJobs, sweepOnly } from '../testing/jobs';
 import { bootTestApp, resetDatabase, seedOrganization, seedUser, type SeededUser, type TestApp } from '../testing/harness';
@@ -35,6 +35,11 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
   async function createSurvey(title: string, extra: Record<string, unknown> = {}, as: SeededUser = manager): Promise<string> {
     const created = (await request(t.server).post('/api/v1/surveys').set('Authorization', as.authorization).send({ internalTitle: title, title: { en: title }, introduction: { en: 'Thanks for taking part.' }, questions: FIVE_TYPES, audience: { mode: 'EVERYONE' }, ...extra }).expect(201)).body;
     return created.id;
+  }
+
+  /** Admin toggles the organization's sender through the real Settings route. */
+  async function setConnectionEnabled(enabled: boolean): Promise<{ ok: boolean; blockers: { code: string }[]; connection: { enabled: boolean } | null }> {
+    return (await request(t.server).patch('/api/v1/messaging/configuration').set('Authorization', admin.authorization).send({ enabled }).expect(200)).body;
   }
 
   beforeAll(async () => {
@@ -357,5 +362,40 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     await drainJobs(t);
     expect((await t.prisma.message.findUniqueOrThrow({ where: { id: late.id } })).suppressionReason).toBe('SERVICE_WINDOW_CLOSED');
     t.clock.advance(-25 * 3600 * 1000);
+  });
+
+  it('a disabled messaging connection blocks readiness, launches, test runs and queued sends until it is re-enabled (R22, R43)', async () => {
+    const id = await createSurvey('Disabled connection survey', { audience: { mode: 'SELECTED', contactIds: [contacts.Ayesha, contacts.Bilal] } });
+    const blocked = await setConnectionEnabled(false);
+    expect(blocked.ok).toBe(false);
+    expect(blocked.blockers.map((blocker) => blocker.code)).toEqual(['CONNECTION_DISABLED']);
+    expect(blocked.connection?.enabled).toBe(false);
+    const launch = await request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).send({ mode: 'NOW' }).expect(422);
+    expect(launch.body.code).toBe('TEMPLATE_NOT_READY');
+    const testRun = await request(t.server).post(`/api/v1/surveys/${id}/test-runs`).set('Authorization', manager.authorization).send({ contactIds: [contacts.Ayesha] }).expect(422);
+    expect(testRun.body.code).toBe('TEMPLATE_NOT_READY');
+    expect((await request(t.server).get(`/api/v1/surveys/${id}`).set('Authorization', viewer.authorization).expect(200)).body.state).toBe('DRAFT');
+    // Messages queued while the sender was enabled are rechecked when they are about to leave the worker.
+    expect((await setConnectionEnabled(true)).ok).toBe(true);
+    const launched = (await request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).send({ mode: 'NOW' }).expect(200)).body;
+    const runId: string = launched.liveRun.id;
+    await t.app.get(LaunchService).activateRun({ organizationId: orgId, correlationId: 'test', actor: 'SYSTEM' }, runId);
+    expect(await t.prisma.message.count({ where: { runId, state: 'PENDING' } })).toBe(2);
+    await setConnectionEnabled(false);
+    await drainJobs(t);
+    const messages = await t.prisma.message.findMany({ where: { runId }, orderBy: { createdAt: 'asc' } });
+    expect(messages.map((message) => [message.state, message.suppressionReason])).toEqual([
+      ['SUPPRESSED', 'CONNECTION_DISABLED'],
+      ['SUPPRESSED', 'CONNECTION_DISABLED'],
+    ]);
+    expect(await t.prisma.invitation.count({ where: { runId, state: 'SUPPRESSED' } })).toBe(2);
+    expect((await t.prisma.surveyRun.findUniqueOrThrow({ where: { id: runId } })).dispatchBlockReason).toBe('CONNECTION_DISABLED');
+    // Suppressed messages need an explicit Admin retry once the connection is enabled again.
+    await setConnectionEnabled(true);
+    await request(t.server).post(`/api/v1/messages/${messages[0].id}/retry`).set('Authorization', admin.authorization).send({}).expect(202);
+    await drainJobs(t);
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: messages[0].id } })).state).toBe('ACCEPTED');
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: messages[1].id } })).state).toBe('SUPPRESSED');
+    await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
   });
 });

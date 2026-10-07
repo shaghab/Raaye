@@ -33,6 +33,11 @@ export class MessagingReadinessService {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
+  /**
+   * The organization's sender for the configured mode. An enabled connection of that mode is
+   * preferred; otherwise the first row is returned so Settings can show and repair it, and
+   * `check` reports why it must not be used (`CONNECTION_DISABLED`, `CONNECTION_NOT_LIVE`).
+   */
   async connection(ctx: OrgContext): Promise<MessagingConnection | null> {
     const db = this.dbFactory.for(ctx);
     const mode = this.config.isLiveMessaging ? 'LIVE' : 'MOCK';
@@ -47,6 +52,7 @@ export class MessagingReadinessService {
     if (!connection) {
       return { ok: false, blockers: [{ code: 'CONNECTION_MISSING', message: 'No messaging connection is configured for this organization' }], warnings, connection: null, templates: [], flows: [] };
     }
+    if (!connection.enabled) blockers.push({ code: 'CONNECTION_DISABLED', message: 'The messaging connection is disabled; enable it in Settings before any outreach' });
     const [templates, flows, org] = await Promise.all([
       db.templateBinding.findMany({ where: { connectionId: connection.id } }),
       db.flowBinding.findMany({ where: { connectionId: connection.id } }),
@@ -54,7 +60,7 @@ export class MessagingReadinessService {
     ]);
     if (!this.config.isLiveMessaging) {
       warnings.push({ code: 'MOCK_MODE', message: 'Messaging runs in mock mode: nothing is sent to WhatsApp and all synthetic contacts are accepted' });
-      return { ok: true, blockers, warnings, connection, templates, flows };
+      return { ok: blockers.length === 0, blockers, warnings, connection, templates, flows };
     }
     if (connection.mode !== 'LIVE' || connection.provider !== 'META') blockers.push({ code: 'CONNECTION_NOT_LIVE', message: 'The enabled connection is not a live Meta connection' });
     for (const [field, label] of [['phoneNumberId', 'Phone number ID'], ['wabaId', 'WABA ID'], ['appId', 'App ID'], ['graphVersion', 'Graph API version']] as const) {
