@@ -1220,6 +1220,8 @@ model Job {
   lastErrorCode  String?   @map("last_error_code")
   lastErrorAt    DateTime? @map("last_error_at") @db.Timestamptz(6)
   payload        Json?
+  /** When the job was handed to the external task queue (Cloud Tasks); null under the postgres driver. */
+  pushedAt       DateTime? @map("pushed_at") @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   finishedAt     DateTime? @map("finished_at") @db.Timestamptz(6)
@@ -1228,6 +1230,7 @@ model Job {
 
   @@index([status, dueAt, priority])
   @@index([status, leaseExpiresAt])
+  @@index([status, pushedAt, dueAt])
   @@index([organizationId, kind, entityId])
   @@map("jobs")
 }

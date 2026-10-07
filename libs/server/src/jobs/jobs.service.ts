@@ -3,8 +3,10 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { Clock } from '@raaye/domain';
 import { CLOCK } from '../clock/clock.service';
 import { APP_CONFIG, type AppConfig } from '../config/env';
+import { getLogger } from '../observability/logger';
 import { asJson } from '../persistence/json';
 import { Prisma, PrismaService, type JobKind } from '../persistence/prisma.service';
+import { CloudTasksAdapter, type TaskPusher } from './cloud-tasks';
 
 /** Minimal structural client so both the base client and tenant transactions can enqueue. */
 export interface JobWriter {
@@ -55,11 +57,14 @@ export const JOB_PRIORITY = {
 @Injectable()
 export class JobsService {
   readonly workerId = `${process.pid}-${randomUUID().slice(0, 8)}`;
+  private readonly logger = getLogger('jobs');
+  private pushScheduled = false;
 
   constructor(
     private readonly prisma: PrismaService,
     @Inject(CLOCK) private readonly clock: Clock,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly cloudTasks: CloudTasksAdapter,
   ) {}
 
   /** Idempotent enqueue: an existing job with the same dedupe key is left untouched. */
@@ -81,9 +86,56 @@ export class JobsService {
       ],
       skipDuplicates: true,
     });
-    if (result.count === 1) return { id, created: true };
+    if (result.count === 1) {
+      this.schedulePush();
+      return { id, created: true };
+    }
     const existing = await client.job.findUnique({ where: { dedupeKey: input.dedupeKey }, select: { id: true } });
     return { id: existing?.id ?? id, created: false };
+  }
+
+  /**
+   * Under JOB_DRIVER=cloud_tasks the row alone does nothing: hand every pending, not yet
+   * pushed job to the queue as an HTTP task aimed at /internal/jobs/:id/execute. Rows are
+   * only visible once their transaction committed, so a push scheduled from inside a
+   * transaction simply picks the job up on the next call; the periodic sweep calls this too.
+   */
+  async pushDue(options: { pusher?: TaskPusher; limit?: number; now?: Date } = {}): Promise<number> {
+    const pusher = options.pusher ?? (this.cloudTasks.enabled ? this.cloudTasks : null);
+    if (!pusher) return 0;
+    const now = options.now ?? this.clock.now();
+    const pending = await this.prisma.job.findMany({
+      where: { status: 'PENDING', pushedAt: null },
+      orderBy: [{ dueAt: 'asc' }, { createdAt: 'asc' }],
+      take: options.limit ?? 500,
+      select: { id: true, dueAt: true, attempts: true },
+    });
+    let pushed = 0;
+    for (const job of pending) {
+      const outcome = await pusher.push({
+        name: pusher.taskName(job.id, job.attempts),
+        url: pusher.jobUrl(job.id),
+        body: { jobId: job.id },
+        scheduleTime: job.dueAt.getTime() > now.getTime() ? job.dueAt : undefined,
+      });
+      if (outcome === 'FAILED') {
+        this.logger.warn({ jobId: job.id }, 'Task push failed; the sweep will retry');
+        continue;
+      }
+      const marked = await this.prisma.job.updateMany({ where: { id: job.id, status: 'PENDING', pushedAt: null }, data: { pushedAt: now } });
+      pushed += marked.count;
+    }
+    return pushed;
+  }
+
+  /** Coalesced, post-commit push attempt (no-op under the postgres driver). */
+  private schedulePush(): void {
+    if (!this.cloudTasks.enabled || this.pushScheduled) return;
+    this.pushScheduled = true;
+    setImmediate(() => {
+      this.pushScheduled = false;
+      void this.pushDue().catch((error: unknown) => this.logger.error({ err: error instanceof Error ? error.message : String(error) }, 'Task push failed'));
+    });
   }
 
   /** Narrow control-plane claim: returns due pending jobs under a lease, across tenants. */
@@ -159,8 +211,9 @@ export class JobsService {
     const dueAt = new Date(now.getTime() + (base + jitter) * 1000);
     await this.prisma.job.updateMany({
       where: { id: job.id, status: 'RUNNING' },
-      data: { status: 'PENDING', dueAt, lastErrorCode: errorCode, lastErrorAt: now, leaseOwner: null, leaseExpiresAt: null },
+      data: { status: 'PENDING', dueAt, lastErrorCode: errorCode, lastErrorAt: now, leaseOwner: null, leaseExpiresAt: null, pushedAt: null },
     });
+    this.schedulePush();
     return 'RETRY';
   }
 
@@ -172,7 +225,7 @@ export class JobsService {
       if (job.attempts >= job.maxAttempts) {
         await this.prisma.job.updateMany({ where: { id: job.id, status: 'RUNNING' }, data: { status: 'FAILED', lastErrorCode: 'LEASE_EXPIRED', lastErrorAt: now, finishedAt: now, leaseOwner: null, leaseExpiresAt: null } });
       } else {
-        const result = await this.prisma.job.updateMany({ where: { id: job.id, status: 'RUNNING' }, data: { status: 'PENDING', lastErrorCode: 'LEASE_EXPIRED', lastErrorAt: now, leaseOwner: null, leaseExpiresAt: null } });
+        const result = await this.prisma.job.updateMany({ where: { id: job.id, status: 'RUNNING' }, data: { status: 'PENDING', lastErrorCode: 'LEASE_EXPIRED', lastErrorAt: now, leaseOwner: null, leaseExpiresAt: null, pushedAt: null } });
         recovered += result.count;
       }
     }

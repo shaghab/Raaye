@@ -12,6 +12,8 @@ export interface SweepResult {
   activations: number;
   closings: number;
   reconciledStatuses: number;
+  /** Jobs handed to Cloud Tasks during this sweep (always 0 under the postgres driver). */
+  pushedTasks: number;
 }
 
 /**
@@ -56,8 +58,9 @@ export class SweepService {
       this.lastRetentionAt = Date.now();
       await this.retention.run();
     }
-    const result = { recoveredLeases, activations, closings, reconciledStatuses };
-    if (recoveredLeases || activations || closings || reconciledStatuses) this.logger.info(result, 'Sweep completed');
+    const pushedTasks = await this.jobs.pushDue({ now });
+    const result = { recoveredLeases, activations, closings, reconciledStatuses, pushedTasks };
+    if (recoveredLeases || activations || closings || reconciledStatuses || pushedTasks) this.logger.info(result, 'Sweep completed');
     return result;
   }
 }

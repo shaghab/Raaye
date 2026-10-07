@@ -61,4 +61,16 @@ export class CloudTasksAdapter {
   jobUrl(jobId: string): string {
     return `${this.config.WORKER_BASE_URL ?? ''}/api/v1/internal/jobs/${jobId}/execute`;
   }
+
+  /** Deterministic per attempt: a retry after backoff gets a fresh task; a double push is rejected as ALREADY_EXISTS. */
+  taskName(jobId: string, attempts: number): string {
+    return `job-${jobId}-${attempts}`;
+  }
+}
+
+/** The subset of the adapter the job queue needs; tests supply an in-memory pusher. */
+export interface TaskPusher {
+  push(request: TaskRequest): Promise<'CREATED' | 'EXISTS' | 'FAILED'>;
+  jobUrl(jobId: string): string;
+  taskName(jobId: string, attempts: number): string;
 }
