@@ -120,4 +120,12 @@ One P1 finding was fixed with a regression test (answer writes lock the survey r
 
 ## Review round 13 (Codex, commit 2c62a04)
 
-Codex completed its review of 2c62a04 with no findings ("Didn't find any major issues", pull-request comment 6037569940). Every review thread on the pull request is resolved: 24 P1 findings were fixed with regression tests across rounds 1-12, and 14 P2 findings are tracked as GitHub issues #4-#12 and #14-#19 (plus #13 for the first-organization bootstrap gap found while fixing round 4).
+Codex completed its review of 2c62a04 with no findings ("Didn't find any major issues", pull-request comment 6037569940). Every review thread on the pull request is resolved: 25 P1 findings were fixed with regression tests across rounds 1-12, and 15 P2 findings are tracked as GitHub issues #4-#12 and #14-#19 (plus #13 for the first-organization bootstrap gap found while fixing round 4).
+
+## Final verification on the pull-request head
+
+Lint, strict typecheck, unit tests (64), integration tests (11 suites / 71 tests) and `pnpm whatsapp:validate` last ran after the final code change (`56b2580`, head `2c62a04`); every later commit only touches the `plan/` records. On `745b97f`:
+
+- `pnpm build`: passed (api, worker, web production bundles).
+- `pnpm test:e2e`: passed, 8 Playwright journeys (1 m 18 s).
+- Docker smoke (`scripts/docker-smoke.ts` with the Compose stack rebuilt from this head): passed at 12:21 UTC with the stack rebuilt from this head: bootstrap migrated and seeded, dashboard and API reachable through nginx on 127.0.0.1:8080, emulator sign-in, seeded surveys present, a newly created contact survived `docker compose restart api worker`, the seed re-run added nothing, and `docker compose down` completed. A first attempt failed only because the script reused a fixed phone number against the database volume kept from an earlier `--keep` run; `scripts/docker-smoke.ts` now derives the number from the run timestamp (committed together with this record).

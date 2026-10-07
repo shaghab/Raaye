@@ -54,8 +54,11 @@ async function main(): Promise<void> {
   if (me.role !== 'ADMIN' || me.organization.slug !== 'pilap') throw new Error('Demo admin membership missing');
   const surveys = await api<{ total: number }>(token, '/surveys?limit=1');
   if (surveys.total < 4) throw new Error(`Expected seeded surveys, found ${surveys.total}`);
-  const marker = `Smoke contact ${Date.now()}`;
-  const created = await api<{ id: string }>(token, '/contacts', { method: 'POST', body: JSON.stringify({ name: marker, phone: '+923009990001' }) });
+  // A fresh synthetic number per run: the Compose volume keeps earlier smoke contacts.
+  const stamp = Date.now();
+  const marker = `Smoke contact ${stamp}`;
+  const phone = `+92300${String(stamp).slice(-7)}`;
+  const created = await api<{ id: string }>(token, '/contacts', { method: 'POST', body: JSON.stringify({ name: marker, phone }) });
   compose('restart', 'api', 'worker');
   await waitFor(`${WEB}/api/v1/health/ready`);
   const after = await api<{ name: string }>(await signIn('admin@pilap.demo', 'Raaye-Admin-2026!'), `/contacts/${created.id}`);
