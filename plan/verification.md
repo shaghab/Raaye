@@ -117,3 +117,7 @@ Two P1 findings were fixed with regression tests (participant-notice version upd
 ## Review round 12 (Codex, commit 964f7d5)
 
 One P1 finding was fixed with a regression test (answer writes lock the survey run row and re-read its state, so they serialize with closure) and one P2 finding was tracked as GitHub issue #19. After the fix: `pnpm lint` passed (7 projects), `pnpm typecheck` passed (7 projects), unit tests passed for 6 projects (server 18), integration suite 11 suites / 71 tests passed.
+
+## Review round 13 (Codex, commit 2c62a04)
+
+Codex completed its review of 2c62a04 with no findings ("Didn't find any major issues", pull-request comment 6037569940). Every review thread on the pull request is resolved: 24 P1 findings were fixed with regression tests across rounds 1-12, and 14 P2 findings are tracked as GitHub issues #4-#12 and #14-#19 (plus #13 for the first-organization bootstrap gap found while fixing round 4).
