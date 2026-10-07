@@ -26,8 +26,17 @@
       "round": 2,
       "headSha": "e653148",
       "requestedAt": "2026-10-07T19:58:00+00:00",
+      "status": "completed",
+      "trigger": "@codex review comment 6045550145",
+      "reviewedAt": "2026-10-07T19:50:13Z",
+      "findings": 1,
+      "outcome": "P1: the backfill missed legacy UPDATE rows whose contact a later import touched; fixed in dc9916a (durable-evidence classification, undeterminable rows refused)"
+    },
+    {
+      "round": 3,
+      "headSha": "dc9916a",
       "status": "running",
-      "trigger": "@codex review comment 6045550145"
+      "trigger": "@codex review comment"
     }
   ],
   "processedFindings": [
@@ -64,9 +73,19 @@
       "commit": "e653148",
       "resolved": true,
       "replyCommentId": 4211246501
+    },
+    {
+      "commentId": 4211284557,
+      "threadId": "PRRT_kwDOU--Sjc6qEeWZ",
+      "priority": "P1",
+      "file": "prisma/migrations/20261007170000_import_row_applied_at/migration.sql",
+      "title": "Backfill legacy updates even after a later import",
+      "action": "fixed",
+      "commit": "dc9916a",
+      "resolved": true
     }
   ],
   "issues": [],
   "blockers": [],
-  "updatedAt": "2026-10-07T19:46:33.259335+00:00"
+  "updatedAt": "2026-10-07T20:00:49.665530+00:00"
 }
