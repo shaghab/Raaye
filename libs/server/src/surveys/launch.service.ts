@@ -83,6 +83,12 @@ export class LaunchService {
       await db.$transaction(async (tx) => {
         // Serialized with archive on the survey row: an archive that commits first fails this guard.
         await tx.$queryRaw`SELECT id FROM surveys WHERE id = ${survey.id}::uuid AND organization_id = ${ctx.organizationId}::uuid FOR UPDATE`;
+        // Everything validated above was read before the lock: refuse to freeze a revision that an
+        // edit changed in between (edits bump the revision's updatedAt or install a new revision).
+        const fresh = await tx.survey.findUnique({ where: { id: survey.id }, select: { currentRevisionNumber: true, revisions: { where: { id: revision.id }, select: { updatedAt: true } } } });
+        if (!fresh || fresh.currentRevisionNumber !== survey.currentRevisionNumber || fresh.revisions[0]?.updatedAt.getTime() !== revision.updatedAt.getTime()) {
+          throw new DomainError('SURVEY_STATE_INVALID', 'The survey was edited while it was being launched; review it and launch again');
+        }
         const guard = await tx.survey.updateMany({ where: { id: survey.id, state: 'DRAFT', archivedAt: null }, data: { state: input.mode === 'NOW' ? 'ACTIVE' : 'SCHEDULED' } });
         if (guard.count !== 1) throw new DomainError('SURVEY_STATE_INVALID', 'The survey was launched or archived concurrently');
         await tx.surveyRevision.update({ where: { id: revision.id }, data: { frozenAt: now, scheduledOpensAt: opensAt, rendererPlan: asJson(revision.questions.map((question) => ({ questionId: question.id, renderer: question.renderer }))) } });

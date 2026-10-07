@@ -294,6 +294,33 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
   });
 
+  it('draft edits and launch of the same survey serialize: a launched survey freezes exactly what was validated (R29)', async () => {
+    for (let round = 0; round < 4; round += 1) {
+      const id = await createSurvey(`Edit race ${round}`, { audience: { mode: 'SELECTED', contactIds: [contacts['Ehsan']] } });
+      const [edited, launched] = await Promise.all([
+        request(t.server).patch(`/api/v1/surveys/${id}`).set('Authorization', manager.authorization).send({ questions: FIVE_TYPES.slice(0, 2) }),
+        request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).send({ mode: 'NOW' }),
+      ]);
+      expect([200, 409]).toContain(edited.status);
+      expect([200, 409]).toContain(launched.status);
+      const detail = (await request(t.server).get(`/api/v1/surveys/${id}`).set('Authorization', admin.authorization).expect(200)).body;
+      if (detail.state === 'ACTIVE') {
+        const run = await t.prisma.surveyRun.findFirstOrThrow({ where: { surveyId: id, kind: 'LIVE' } });
+        const frozen = await t.prisma.surveyRevision.findUniqueOrThrow({ where: { id: run.revisionId } });
+        expect(frozen.frozenAt).not.toBeNull();
+        expect(frozen.revisionNumber).toBe(detail.revision.revisionNumber);
+        expect(await t.prisma.surveyRevision.count({ where: { surveyId: id } })).toBe(1);
+        // An edit that succeeded committed before the launch validated the survey, so the frozen content includes it.
+        expect(await t.prisma.question.count({ where: { revisionId: run.revisionId } })).toBe(edited.status === 200 ? 2 : 5);
+        await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
+      } else {
+        expect(detail.state).toBe('DRAFT');
+        expect(launched.status).toBe(409);
+        expect(detail.revision.questions).toHaveLength(2);
+      }
+    }
+  });
+
   it('archive and launch of the same draft serialize: an archived survey never has live outreach (R55)', async () => {
     for (let round = 0; round < 4; round += 1) {
       const id = await createSurvey(`Race survey ${round}`, { audience: { mode: 'SELECTED', contactIds: [contacts['Ehsan']] } });

@@ -118,15 +118,19 @@ export class SurveysService {
   async update(ctx: TenantContext, surveyId: string, input: SurveyUpdate): Promise<SurveyDetailDto> {
     if (ctx.role === 'VIEWER') throw forbidden();
     const db = this.dbFactory.for(ctx);
-    const survey = await this.load(db, surveyId);
-    if (survey.archivedAt) throw new DomainError('SURVEY_STATE_INVALID', 'Archived surveys are read-only');
-    if (survey.state !== 'DRAFT') throw new DomainError('SURVEY_STATE_INVALID', `A ${survey.state.toLowerCase()} survey cannot be edited; unschedule or clone it first`);
-    const current = survey.revisions[0];
-    this.assertTimingPermission(ctx, input, { editWindowSeconds: current.editWindowSeconds, durationSeconds: current.durationSeconds, explicitClosesAt: current.explicitClosesAt?.toISOString() ?? null });
-    const locale = input.locale ?? current.locale;
-    const questionInputs: QuestionInput[] | null = input.questions ?? null;
-    const normalized = questionInputs ? validateQuestions(questionInputs, locale).normalized : null;
     await db.$transaction(async (tx) => {
+      // Survey row lock shared with launch and archive: the state and the revision are read and
+      // validated under it, so an edit can neither overwrite a revision a launch is freezing nor
+      // install a new revision on a survey that just became active.
+      await tx.$queryRaw`SELECT id FROM surveys WHERE id = ${surveyId}::uuid AND organization_id = ${ctx.organizationId}::uuid FOR UPDATE`;
+      const survey = await this.load(tx, surveyId);
+      if (survey.archivedAt) throw new DomainError('SURVEY_STATE_INVALID', 'Archived surveys are read-only');
+      if (survey.state !== 'DRAFT') throw new DomainError('SURVEY_STATE_INVALID', `A ${survey.state.toLowerCase()} survey cannot be edited; unschedule or clone it first`);
+      const current = survey.revisions[0];
+      this.assertTimingPermission(ctx, input, { editWindowSeconds: current.editWindowSeconds, durationSeconds: current.durationSeconds, explicitClosesAt: current.explicitClosesAt?.toISOString() ?? null });
+      const locale = input.locale ?? current.locale;
+      const questionInputs: QuestionInput[] | null = input.questions ?? null;
+      const normalized = questionInputs ? validateQuestions(questionInputs, locale).normalized : null;
       let revision = current;
       const hasRuns = await tx.surveyRun.count({ where: { revisionId: current.id } });
       if (current.frozenAt || hasRuns > 0) {
