@@ -68,6 +68,7 @@ Screens exercised in a browser against both the dev server and the Docker/nginx 
 - Node slim images lack the `openssl` binary; Prisma prints an OpenSSL detection warning in the `bootstrap` container but migrations apply correctly.
 - The Angular dev server (`nx serve web`) takes 60-90 s to start on first run; Playwright waits up to 240 s.
 - The `jobs` table "dead jobs" counter on the overview counts permanently failed send jobs, which the seed creates deliberately as a diagnostics fixture.
+- A live deployment has no automated way to create its first organization and Admin membership (the demo seed is refused in live configuration); the messaging connection is created from Settings, but the organization itself needs an operator database insert. Tracked in issue #13.
 
 ## Review round 1 (Codex, commit 596ac4c)
 

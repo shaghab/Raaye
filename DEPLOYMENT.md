@@ -50,6 +50,8 @@ META_*                                          # see WHATSAPP_SETUP.md
 
 Run `node node_modules/prisma/build/index.js migrate deploy` (the image entrypoint's `bootstrap` command does this and then seeds; in production use `migrate deploy` only — the seed refuses to run without `ALLOW_DEMO_BOOTSTRAP=true`, which production configuration rejects).
 
+After the first deployment an Admin creates the organization's live sender by saving **Settings → Messaging** once (see `WHATSAPP_SETUP.md`); the save creates the connection row and its webhook app key. Creating the first organization, user and Admin membership in a live deployment is not automated yet and requires an operator database insert; this gap is tracked in [issue #13](https://github.com/shaghab/Raaye/issues/13).
+
 ## Observability
 
 Structured pino logs with correlation ids; no personal data in logs. `GET /api/v1/health/live` and `/health/ready` (database check) for probes.

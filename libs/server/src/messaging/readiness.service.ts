@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import type { MessagingConfiguration, MessagingReadinessDto } from '@raaye/contracts';
 import type { Clock } from '@raaye/domain';
@@ -7,8 +8,9 @@ import type { OrgContext, TenantContext } from '../common/context';
 import { DomainError, notFound } from '../common/errors';
 import { APP_CONFIG, type AppConfig } from '../config/env';
 import { asJson } from '../persistence/json';
-import type { FlowBinding, MessagingConnection, TemplateBinding } from '../persistence/prisma.service';
+import type { ConnectionMode, FlowBinding, MessagingConnection, MessagingProvider, TemplateBinding } from '../persistence/prisma.service';
 import { TenantDbFactory } from '../persistence/tenant-db.factory';
+import type { TenantTx } from '../persistence/tenant-db';
 import { flowAssetVersion } from './flow-assets';
 import { MetaManagementClient } from './meta-management';
 import { resolveSecret } from './secrets';
@@ -20,6 +22,11 @@ export interface ReadinessCheck {
   connection: MessagingConnection | null;
   templates: TemplateBinding[];
   flows: FlowBinding[];
+}
+
+/** Identity of a sender created from Settings: provider and app key follow the configured mode. */
+export function provisionedConnection(mode: ConnectionMode, organizationSlug: string, suffix: string): { provider: MessagingProvider; mode: ConnectionMode; appKey: string } {
+  return mode === 'LIVE' ? { provider: 'META', mode, appKey: `live-${organizationSlug}-${suffix}` } : { provider: 'MOCK', mode, appKey: `mock-${organizationSlug}` };
 }
 
 /** Sender readiness: configuration, template approval and Flow publication. */
@@ -39,9 +46,26 @@ export class MessagingReadinessService {
    * `check` reports why it must not be used (`CONNECTION_DISABLED`, `CONNECTION_NOT_LIVE`).
    */
   async connection(ctx: OrgContext): Promise<MessagingConnection | null> {
-    const db = this.dbFactory.for(ctx);
-    const mode = this.config.isLiveMessaging ? 'LIVE' : 'MOCK';
-    return (await db.messagingConnection.findFirst({ where: { mode, enabled: true }, orderBy: { createdAt: 'asc' } })) ?? (await db.messagingConnection.findFirst({ orderBy: { createdAt: 'asc' } }));
+    return this.connectionIn(this.dbFactory.for(ctx));
+  }
+
+  private get mode(): ConnectionMode {
+    return this.config.isLiveMessaging ? 'LIVE' : 'MOCK';
+  }
+
+  /** Enabled sender for the configured mode first, otherwise that mode's disabled row so Settings can repair it. */
+  private async connectionIn(client: TenantTx): Promise<MessagingConnection | null> {
+    const mode = this.mode;
+    return (await client.messagingConnection.findFirst({ where: { mode, enabled: true }, orderBy: { createdAt: 'asc' } })) ?? (await client.messagingConnection.findFirst({ where: { mode }, orderBy: { createdAt: 'asc' } }));
+  }
+
+  /** The first Settings save creates the organization's sender for the configured mode; no seed or database edit is needed. */
+  private async provision(ctx: TenantContext, tx: TenantTx): Promise<MessagingConnection> {
+    const org = await tx.organization.findUniqueOrThrow({ where: { id: ctx.organizationId }, select: { slug: true } });
+    const identity = provisionedConnection(this.mode, org.slug, randomBytes(8).toString('hex'));
+    const connection = await tx.messagingConnection.create({ data: { organizationId: ctx.organizationId, ...identity, enabled: true } });
+    await this.audit.record(ctx, { action: 'messaging.connection_created', resourceType: 'messaging_connection', resourceId: connection.id, metadata: { mode: identity.mode, provider: identity.provider, appKey: identity.appKey } }, tx);
+    return connection;
   }
 
   async check(ctx: OrgContext, options: { needResultsTemplate?: boolean; needFlows?: ('SINGLE_CHOICE' | 'MULTI_CHOICE' | 'PROFILE')[] } = {}): Promise<ReadinessCheck> {
@@ -50,7 +74,7 @@ export class MessagingReadinessService {
     const blockers: { code: string; message: string }[] = [];
     const warnings: { code: string; message: string }[] = [];
     if (!connection) {
-      return { ok: false, blockers: [{ code: 'CONNECTION_MISSING', message: 'No messaging connection is configured for this organization' }], warnings, connection: null, templates: [], flows: [] };
+      return { ok: false, blockers: [{ code: 'CONNECTION_MISSING', message: `No ${this.mode.toLowerCase()} messaging connection exists for this organization yet; save the sender configuration in Settings to create it` }], warnings, connection: null, templates: [], flows: [] };
     }
     if (!connection.enabled) blockers.push({ code: 'CONNECTION_DISABLED', message: 'The messaging connection is disabled; enable it in Settings before any outreach' });
     const [templates, flows, org] = await Promise.all([
@@ -124,10 +148,9 @@ export class MessagingReadinessService {
   }
 
   /** Non-secret fields and secret references only; values never pass through here. */
+  /** Save the sender configuration; the first save creates the connection for the configured mode. */
   async updateConfiguration(ctx: TenantContext, input: MessagingConfiguration): Promise<MessagingReadinessDto> {
     const db = this.dbFactory.for(ctx);
-    const connection = await this.connection(ctx);
-    if (!connection) throw notFound('Messaging connection');
     const { templates, flows, ...fields } = input;
     for (const value of [fields.appSecretRef, fields.accessTokenRef, fields.verifyTokenRef]) {
       if (value && /^(EAA|Bearer |sk_|secret)/i.test(value) && value.length > 40) {
@@ -135,6 +158,9 @@ export class MessagingReadinessService {
       }
     }
     await db.$transaction(async (tx) => {
+      // The organization row lock serializes concurrent first saves so exactly one sender is created.
+      await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${ctx.organizationId}::uuid FOR UPDATE`;
+      const connection = (await this.connectionIn(tx)) ?? (await this.provision(ctx, tx));
       await tx.messagingConnection.update({ where: { id: connection.id }, data: { ...fields } });
       if (templates) {
         for (const template of templates) {
