@@ -26,15 +26,11 @@ function build(scenario: Scenario) {
   const calls: string[] = [];
   let transactions = 0;
   const tx = {
-    // The identity lock returns void, so it runs through $executeRaw; row locks run through $queryRaw.
-    $executeRaw: async (strings: TemplateStringsArray) => {
-      if (!strings.join('?').includes('pg_advisory_xact_lock')) throw new Error('unexpected statement');
-      if (scenario.reconcileError && transactions > 1) throw scenario.reconcileError;
-      calls.push('lock-identity');
-      return 1;
-    },
     $queryRaw: async (strings: TemplateStringsArray) => {
-      if (strings.join('?').includes('staff_invitations')) calls.push('lock-invitation');
+      if (strings.join('?').includes('staff_invitations')) {
+        if (scenario.reconcileError) throw scenario.reconcileError;
+        calls.push('lock-invitation');
+      }
       return [];
     },
     staffInvitation: {
@@ -61,9 +57,6 @@ function build(scenario: Scenario) {
       calls.push('create');
       return 'uid-new';
     },
-    deleteUser: async () => {
-      calls.push('delete');
-    },
   };
   const service = new OrganizationService(
     prisma as unknown as PrismaService,
@@ -80,47 +73,37 @@ describe('invitation acceptance and the account it provisions', () => {
   const accept = (service: OrganizationService, token: string) => service.acceptInvitation({ token, password: 'Secret-Pass-1' }, null, 'corr');
   const dropped = new Error('Connection terminated unexpectedly');
 
-  // Every acceptance transaction takes the identity lock first; a reconciliation takes it again, then the invitation row lock.
-  it('removes the account it created when the invitation can no longer be consumed and nothing references the identity', async () => {
+  it('keeps the account and says so when the invitation can no longer be consumed', async () => {
     const { service, token, calls } = build({ consumed: 0, userRow: null });
-    await expect(accept(service, token)).rejects.toMatchObject({ code: 'INVITATION_INVALID' });
-    expect(calls).toEqual(['create', 'lock-identity', 'lock-identity', 'lock-invitation', 'delete']);
-  });
-
-  it('keeps the account after a refusal when another acceptance already stored the identity', async () => {
-    const { service, token, calls } = build({ consumed: 0, userRow: { id: 'user-elsewhere' }, acceptedByUserId: null });
-    await expect(accept(service, token)).rejects.toMatchObject({ code: 'INVITATION_INVALID' });
-    expect(calls).toEqual(['create', 'lock-identity', 'lock-identity', 'lock-invitation']);
+    await expect(accept(service, token)).rejects.toMatchObject({ code: 'INVITATION_INVALID', details: { accountCreated: true }, message: expect.stringContaining('Your account was created') });
+    expect(calls).toEqual(['create', 'lock-invitation']);
   });
 
   it('keeps the account when the acceptance completes', async () => {
     const { service, token, calls } = build({ consumed: 1 });
     await expect(accept(service, token)).resolves.toEqual({ email: 'new@example.org' });
-    expect(calls).toEqual(['create', 'lock-identity']);
+    expect(calls).toEqual(['create']);
   });
 
-  it('never touches the account of an existing identity', async () => {
+  it('reports a plain refusal for an existing identity', async () => {
     const { service, token, calls } = build({ consumed: 0, userRow: null });
-    await expect(service.acceptInvitation({ token }, { uid: 'uid-existing', email: 'new@example.org', emailVerified: true }, 'corr')).rejects.toMatchObject({ code: 'INVITATION_INVALID' });
-    expect(calls).toEqual(['lock-identity']);
+    await expect(service.acceptInvitation({ token }, { uid: 'uid-existing', email: 'new@example.org', emailVerified: true }, 'corr')).rejects.toMatchObject({ code: 'INVITATION_INVALID', message: 'This invitation is no longer valid' });
+    expect(calls).toEqual(['lock-invitation']);
   });
 
   it('treats an ambiguous failure whose acceptance the database shows as persisted as a success', async () => {
     const { service, token, calls } = build({ transactionError: dropped, userRow: { id: 'user-1' }, acceptedByUserId: 'user-1' });
     await expect(accept(service, token)).resolves.toEqual({ email: 'new@example.org' });
-    expect(calls).toEqual(['create', 'lock-identity', 'lock-invitation']);
+    expect(calls).toEqual(['create', 'lock-invitation']);
   });
 
-  it('removes the account after an ambiguous failure only once the identity and invitation locks confirm there is no trace of the acceptance', async () => {
-    const { service, token, calls } = build({ transactionError: dropped, userRow: null });
-    await expect(accept(service, token)).rejects.toBe(dropped);
-    expect(calls).toEqual(['create', 'lock-identity', 'lock-invitation', 'delete']);
-  });
-
-  it('keeps the account when the state after an ambiguous failure cannot be confirmed', async () => {
+  it('rethrows an ambiguous failure that the database does not show as persisted, without touching the account', async () => {
+    const noTrace = build({ transactionError: dropped, userRow: null });
+    await expect(accept(noTrace.service, noTrace.token)).rejects.toBe(dropped);
+    expect(noTrace.calls).toEqual(['create', 'lock-invitation']);
     const inconsistent = build({ transactionError: dropped, userRow: { id: 'user-1' }, acceptedByUserId: null });
     await expect(accept(inconsistent.service, inconsistent.token)).rejects.toBe(dropped);
-    expect(inconsistent.calls).toEqual(['create', 'lock-identity', 'lock-invitation']);
+    expect(inconsistent.calls).toEqual(['create', 'lock-invitation']);
     const unreachable = build({ transactionError: dropped, reconcileError: new Error('database unreachable') });
     await expect(accept(unreachable.service, unreachable.token)).rejects.toBe(dropped);
     expect(unreachable.calls).toEqual(['create']);

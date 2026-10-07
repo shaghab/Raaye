@@ -42,11 +42,6 @@ export class FirebaseAdminService {
     return record.uid;
   }
 
-  /** Removes an account that was provisioned for an acceptance that could not complete. */
-  async deleteUser(uid: string): Promise<void> {
-    await this.auth.deleteUser(uid);
-  }
-
   async findUidByEmail(email: string): Promise<string | null> {
     try {
       const record = await this.auth.getUserByEmail(email);

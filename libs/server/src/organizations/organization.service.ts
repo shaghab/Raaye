@@ -41,11 +41,6 @@ export function toOrganizationDto(org: Organization): OrganizationDto {
   };
 }
 
-/** Advisory lock key that serializes every acceptance and reconciliation concerning one Firebase identity. */
-function identityLockKey(firebaseUid: string): string {
-  return `identity:${firebaseUid}`;
-}
-
 @Injectable()
 export class OrganizationService {
   private readonly logger = getLogger('organizations');
@@ -245,61 +240,25 @@ export class OrganizationService {
     try {
       await this.consumeInvitation(invitation, firebaseUid, input.displayName, correlationId);
     } catch (error) {
-      if (!createdUid) throw error;
-      // The account was provisioned for this acceptance. It is removed again only when the acceptance
-      // rolled back and nothing else references the identity, so that no orphan credentials remain. A
-      // failure may hide a commit whose acknowledgement was lost, and the identity may already carry a
-      // membership from another acceptance, so the database decides: a persisted acceptance is a success,
-      // and an unconfirmed or referenced state keeps the account rather than stranding a membership.
-      const outcome = await this.acceptanceOutcome(invitation.id, createdUid);
-      if (outcome === 'persisted') {
+      // A failure may hide a commit whose acknowledgement was lost, so the authoritative rows decide
+      // whether the acceptance persisted. An account created for a refused acceptance is kept: removing
+      // it cannot be made safe against a concurrent acceptance by the same identity, and it grants nothing
+      // without a membership. The refusal tells the invitee that the account exists and how to proceed.
+      if (await this.acceptancePersisted(invitation.id, firebaseUid)) {
         this.logger.warn({ invitationId: invitation.id }, 'Invitation acceptance was persisted although its transaction reported an error');
         return { email };
       }
-      if (outcome === 'rolled-back') {
-        await this.firebase.deleteUser(createdUid).catch((cleanupError: unknown) => {
-          this.logger.warn({ invitationId: invitation.id, err: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) }, 'Could not remove the account created for a failed invitation acceptance');
-        });
-      } else {
-        this.logger.warn({ invitationId: invitation.id }, 'The invitation acceptance could not be confirmed as rolled back, or its identity is referenced elsewhere; the created account is left in place');
+      if (createdUid && error instanceof DomainError && error.code === 'INVITATION_INVALID') {
+        throw new DomainError('INVITATION_INVALID', 'This invitation is no longer valid. Your account was created with the password you chose; ask an Admin for a new invitation and accept it after signing in.', { accountCreated: true });
       }
       throw error;
     }
     return { email };
   }
 
-  /**
-   * What became of the acceptance transaction, decided by the authoritative rows: 'persisted' when the
-   * created identity is the invitation's accepter (a commit whose acknowledgement was lost), 'rolled-back'
-   * only when nothing references the identity, and 'unknown' otherwise, including when another
-   * acceptance of the same person (the identity is usable as soon as it exists) has stored a user row
-   * for it, or when the database cannot be read. The rows are read only after the identity lock has
-   * waited for any other acceptance of the same person and a lock on the invitation row has waited for
-   * the failed transaction to finish resolving; a domain refusal raised inside the callback never
-   * committed, but the identity is still checked for other references before deletion.
-   */
-  private async acceptanceOutcome(invitationId: string, firebaseUid: string): Promise<'rolled-back' | 'persisted' | 'unknown'> {
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${identityLockKey(firebaseUid)}))`;
-        await tx.$queryRaw`SELECT id FROM staff_invitations WHERE id = ${invitationId}::uuid FOR UPDATE`;
-        const user = await tx.user.findUnique({ where: { firebaseUid }, select: { id: true } });
-        if (!user) return 'rolled-back' as const;
-        const invitation = await tx.staffInvitation.findUnique({ where: { id: invitationId }, select: { acceptedByUserId: true } });
-        return invitation?.acceptedByUserId === user.id ? ('persisted' as const) : ('unknown' as const);
-      });
-    } catch {
-      return 'unknown';
-    }
-  }
-
   private async consumeInvitation(invitation: { id: string; organizationId: string; email: string; role: 'ADMIN' | 'SURVEY_MANAGER' | 'VIEWER' }, firebaseUid: string, displayName: string | undefined, correlationId: string): Promise<void> {
     const email = invitation.email;
     await this.prisma.$transaction(async (tx) => {
-      // Every acceptance and reconciliation that concerns one identity serializes on this lock, taken
-      // first: an acceptance of another invitation by the same person, even while it still waits for its
-      // organization lock, is therefore visible to a reconciliation before an identity can be deleted.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${identityLockKey(firebaseUid)}))`;
       // The organization row lock serializes acceptance with bootstrap re-runs and member administration:
       // a re-run's active-Admin count and the membership created here cannot interleave, and both paths
       // take the organization lock before touching invitations, so they never deadlock on each other.
@@ -336,6 +295,25 @@ export class OrganizationService {
         },
       });
     });
+  }
+
+  /**
+   * Whether a failed acceptance transaction nevertheless persisted (a commit whose acknowledgement was
+   * lost). The rows are read only after a lock on the invitation row has waited for the failed
+   * transaction to finish resolving; an unreachable database counts as not persisted.
+   */
+  private async acceptancePersisted(invitationId: string, firebaseUid: string): Promise<boolean> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM staff_invitations WHERE id = ${invitationId}::uuid FOR UPDATE`;
+        const user = await tx.user.findUnique({ where: { firebaseUid }, select: { id: true } });
+        if (!user) return false;
+        const invitation = await tx.staffInvitation.findUnique({ where: { id: invitationId }, select: { acceptedByUserId: true } });
+        return invitation?.acceptedByUserId === user.id;
+      });
+    } catch {
+      return false;
+    }
   }
 
   private async loadValidInvitation(token: string) {
