@@ -14,6 +14,7 @@ export * from './auth/auth.service';
 export * from './auth/auth.guard';
 export * from './auth/decorators';
 export * from './audit/audit.service';
+export * from './organizations/bootstrap.service';
 export * from './organizations/organization.service';
 export * from './health/health.service';
 export * from './core.module';

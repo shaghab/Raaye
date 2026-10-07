@@ -461,7 +461,7 @@ model StaffInvitation {
   acceptedAt       DateTime? @map("accepted_at") @db.Timestamptz(6)
   acceptedByUserId String?   @map("accepted_by_user_id") @db.Uuid
   revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
-  invitedByUserId  String    @map("invited_by_user_id") @db.Uuid
+  invitedByUserId  String?   @map("invited_by_user_id") @db.Uuid
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   organization Organization @relation(fields: [organizationId], references: [id])

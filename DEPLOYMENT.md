@@ -50,7 +50,22 @@ META_*                                          # see WHATSAPP_SETUP.md
 
 Run `node node_modules/prisma/build/index.js migrate deploy` (the image entrypoint's `bootstrap` command does this and then seeds; in production use `migrate deploy` only — the seed refuses to run without `ALLOW_DEMO_BOOTSTRAP=true`, which production configuration rejects).
 
-After the first deployment an Admin creates the organization's live sender by saving **Settings → Messaging** once (see `WHATSAPP_SETUP.md`); the save creates the connection row and its webhook app key. Creating the first organization, user and Admin membership in a live deployment is not automated yet and requires an operator database insert; this gap is tracked in [issue #13](https://github.com/shaghab/Raaye/issues/13).
+## First organization and Admin
+
+A live deployment has no demo seed (`ALLOW_DEMO_BOOTSTRAP` must be false), and staff invitations need an existing Admin. The first organization and its first Admin therefore come from the operator command in the worker CLI, which needs only the application environment (`DATABASE_URL`, `WEB_ORIGIN` and the rest of the validated configuration) and works in live configuration:
+
+```
+raaye-entrypoint bootstrap:org --name "Public Interest Law Association of Pakistan" --slug pilap --admin-email admin@example.org [--support-contact "..."] [--timezone Asia/Karachi]
+```
+
+Inside the image this is `node dist/apps/worker/main.js bootstrap:org ...`; on a host checkout it is `pnpm bootstrap:org -- --name ... --slug ... --admin-email ...`; with Compose it is `docker compose run --rm worker bootstrap:org ...`. The command:
+
+- creates the organization when the slug is new, with the default duration and edit window and a placeholder participant notice that the Admin must review in **Settings → Organization** before launching anything;
+- issues a single-use Admin invitation for the address, valid for 72 hours, and prints the result once as JSON on stdout, including the acceptance link. Send that link to the Admin through a trusted channel: opening it in the dashboard creates their Firebase account with a password they choose (or attaches an existing account that carries the same email) and the Admin membership. The structured log records the organization and invitation ids only, never the link; where stdout is captured by a log system (a Cloud Run job, for example), treat that entry as sensitive, or run the command from an operator workstation through the Cloud SQL Auth Proxy;
+- replaces the pending link when run again before acceptance (the earlier link stops working), and refuses with `BOOTSTRAP_REFUSED` once the organization has an active Admin, so further staff are always invited from **Settings → Staff**;
+- writes an `organization.bootstrapped` audit event for the organization on every run.
+
+An Admin then creates the organization's live sender by saving **Settings → Messaging** once (see `WHATSAPP_SETUP.md`); the save creates the connection row and its webhook app key.
 
 ## Observability
 

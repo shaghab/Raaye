@@ -82,12 +82,13 @@ Dashboard: http://127.0.0.1:4200 (the dev server proxies `/api` to http://127.0.
 | `pnpm db:migrate:dev` | Create a new migration during development |
 | `pnpm db:seed` | Idempotent synthetic demo seed (runs through the built worker bundle) |
 | `pnpm seed:scale` | Adds 1,000 synthetic consented contacts for performance testing |
+| `pnpm bootstrap:org -- --name <name> --slug <slug> --admin-email <email>` | Creates an organization and prints a single-use Admin invitation link once (the live-deployment path; needs no demo data) |
 | `pnpm db:reset -- --yes` | Development-only reset (refuses non-local databases) |
 | `pnpm verify` | Lint, typecheck, unit, integration, WhatsApp asset validation and production builds; `-- --e2e` adds Playwright, `-- --docker` adds the Compose smoke test |
 | `pnpm whatsapp:validate` | Validates Flow JSON assets, Flow response fixtures and template specifications against the adapter |
 | `pnpm docker:up` / `pnpm docker:down` | Compose helpers |
 
-Worker CLI (same commands inside the container: `docker compose run --rm worker <command>`): `worker`, `sweep`, `run-once`, `retention`, `seed`, `seed:scale [count]`.
+Worker CLI (same commands inside the container: `docker compose run --rm worker <command>`): `worker`, `sweep`, `run-once`, `retention`, `seed`, `seed:scale [count]`, `bootstrap:org --name <name> --slug <slug> --admin-email <email>` (first organization and Admin invitation for a live deployment; see `DEPLOYMENT.md`).
 
 ## Repository layout
 
@@ -117,6 +118,8 @@ The code includes a real Meta WhatsApp Cloud API adapter, signed webhook ingress
 - `SECURITY.md` — roles, tenant isolation, data handling, retention and what the MVP does not promise.
 
 Setting `MESSAGING_MODE=live` makes configuration validation fail closed unless every required secret reference is present, the emulator and simulator are disabled, demo bootstrap is off and authentication is live. There is no silent fallback to mock mode.
+
+A live deployment gets its first organization and Admin from the operator command `bootstrap:org` (worker CLI, documented in `DEPLOYMENT.md`): it issues a single-use Admin invitation, works without the demo bootstrap and refuses once an active Admin exists.
 
 ## Versions
 
