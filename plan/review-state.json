@@ -94,6 +94,15 @@
       "reviewId": 5441343612,
       "reviewedAt": "2026-10-07T11:03:37Z",
       "findings": 1
+    },
+    {
+      "headSha": "6dc1303",
+      "requestedAt": "2026-10-07T11:37:04.032955+00:00",
+      "status": "completed",
+      "round": 11,
+      "reviewId": 5441745989,
+      "reviewedAt": "2026-10-07T11:42:41Z",
+      "findings": 3
     }
   ],
   "processedFindings": [
@@ -482,6 +491,39 @@
       "action": "fixed",
       "commit": "368dece",
       "resolved": true
+    },
+    {
+      "reviewId": 5441745989,
+      "commentId": 4206436885,
+      "threadId": "PRRT_kwDOU--Sjc6p4rEz",
+      "priority": "P1",
+      "file": "libs/server/src/organizations/organization.service.ts",
+      "title": "Serialize notice version updates with notice text",
+      "action": "fixed",
+      "commit": "1f0941e",
+      "resolved": true
+    },
+    {
+      "reviewId": 5441745989,
+      "commentId": 4206436894,
+      "threadId": "PRRT_kwDOU--Sjc6p4rE3",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Make delivery-state promotion atomic",
+      "action": "fixed",
+      "commit": "4530169",
+      "resolved": true
+    },
+    {
+      "reviewId": 5441745989,
+      "commentId": 4206436902,
+      "threadId": "PRRT_kwDOU--Sjc6p4rE9",
+      "priority": "P2",
+      "file": "libs/server/src/surveys/launch.service.ts",
+      "title": "Require the profile Flow before launching onboarding",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/18",
+      "resolved": true
     }
   ],
   "issues": [
@@ -568,8 +610,14 @@
       "url": "https://github.com/shaghab/Raaye/issues/17",
       "priority": "P2",
       "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205794663"
+    },
+    {
+      "number": 18,
+      "url": "https://github.com/shaghab/Raaye/issues/18",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4206436902"
     }
   ],
   "blockers": [],
-  "updatedAt": "2026-10-07T11:36:52.767913+00:00"
+  "updatedAt": "2026-10-07T11:50:52.844454+00:00"
 }
