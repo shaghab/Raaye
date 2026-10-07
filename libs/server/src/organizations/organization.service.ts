@@ -241,12 +241,12 @@ export class OrganizationService {
       await this.consumeInvitation(invitation, firebaseUid, input.displayName, correlationId);
     } catch (error) {
       if (!createdUid) throw error;
-      // The account was provisioned for this acceptance only. It is removed again when the acceptance
-      // certainly rolled back (the invitation expired during the lock wait, was revoked or was used), so
-      // that no orphan credentials remain. Any other failure may hide a commit whose acknowledgement was
-      // lost, so the database decides: a persisted acceptance is a success, and an unconfirmed state keeps
-      // the account rather than stranding a membership bound to a deleted identity.
-      const outcome = await this.acceptanceOutcome(invitation.id, createdUid, error);
+      // The account was provisioned for this acceptance. It is removed again only when the acceptance
+      // rolled back and nothing else references the identity, so that no orphan credentials remain. A
+      // failure may hide a commit whose acknowledgement was lost, and the identity may already carry a
+      // membership from another acceptance, so the database decides: a persisted acceptance is a success,
+      // and an unconfirmed or referenced state keeps the account rather than stranding a membership.
+      const outcome = await this.acceptanceOutcome(invitation.id, createdUid);
       if (outcome === 'persisted') {
         this.logger.warn({ invitationId: invitation.id }, 'Invitation acceptance was persisted although its transaction reported an error');
         return { email };
@@ -256,7 +256,7 @@ export class OrganizationService {
           this.logger.warn({ invitationId: invitation.id, err: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) }, 'Could not remove the account created for a failed invitation acceptance');
         });
       } else {
-        this.logger.warn({ invitationId: invitation.id }, 'Could not confirm whether the invitation acceptance was persisted; the created account is left in place');
+        this.logger.warn({ invitationId: invitation.id }, 'The invitation acceptance could not be confirmed as rolled back, or its identity is referenced elsewhere; the created account is left in place');
       }
       throw error;
     }
@@ -264,14 +264,15 @@ export class OrganizationService {
   }
 
   /**
-   * What became of the acceptance transaction. A domain refusal is raised inside the callback before
-   * any commit, so it rolled back for certain. For anything else the authoritative rows decide, read
-   * only after a lock on the invitation row has waited for the failed transaction to finish resolving
-   * (a commit whose acknowledgement was lost may still be in flight); an unreachable database leaves
-   * the question open.
+   * What became of the acceptance transaction, decided by the authoritative rows: 'persisted' when the
+   * created identity is the invitation's accepter (a commit whose acknowledgement was lost), 'rolled-back'
+   * only when nothing references the identity, and 'unknown' otherwise, including when another
+   * acceptance of the same person (the identity is usable as soon as it exists) has stored a user row
+   * for it, or when the database cannot be read. The rows are read only after a lock on the invitation
+   * row has waited for the failed transaction to finish resolving; a domain refusal raised inside the
+   * callback never committed, but the identity is still checked for other references before deletion.
    */
-  private async acceptanceOutcome(invitationId: string, firebaseUid: string, error: unknown): Promise<'rolled-back' | 'persisted' | 'unknown'> {
-    if (error instanceof DomainError) return 'rolled-back';
+  private async acceptanceOutcome(invitationId: string, firebaseUid: string): Promise<'rolled-back' | 'persisted' | 'unknown'> {
     try {
       return await this.prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM staff_invitations WHERE id = ${invitationId}::uuid FOR UPDATE`;

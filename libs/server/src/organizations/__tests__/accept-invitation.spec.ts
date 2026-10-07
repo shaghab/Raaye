@@ -76,10 +76,16 @@ describe('invitation acceptance and the account it provisions', () => {
   const accept = (service: OrganizationService, token: string) => service.acceptInvitation({ token, password: 'Secret-Pass-1' }, null, 'corr');
   const dropped = new Error('Connection terminated unexpectedly');
 
-  it('removes the account it created when the invitation can no longer be consumed', async () => {
-    const { service, token, calls } = build({ consumed: 0 });
+  it('removes the account it created when the invitation can no longer be consumed and nothing references the identity', async () => {
+    const { service, token, calls } = build({ consumed: 0, userRow: null });
     await expect(accept(service, token)).rejects.toMatchObject({ code: 'INVITATION_INVALID' });
-    expect(calls).toEqual(['create', 'delete']);
+    expect(calls).toEqual(['create', 'lock-invitation', 'delete']);
+  });
+
+  it('keeps the account after a refusal when another acceptance already stored the identity', async () => {
+    const { service, token, calls } = build({ consumed: 0, userRow: { id: 'user-elsewhere' }, acceptedByUserId: null });
+    await expect(accept(service, token)).rejects.toMatchObject({ code: 'INVITATION_INVALID' });
+    expect(calls).toEqual(['create', 'lock-invitation']);
   });
 
   it('keeps the account when the acceptance completes', async () => {
@@ -89,7 +95,7 @@ describe('invitation acceptance and the account it provisions', () => {
   });
 
   it('never touches the account of an existing identity', async () => {
-    const { service, token, calls } = build({ consumed: 0 });
+    const { service, token, calls } = build({ consumed: 0, userRow: null });
     await expect(service.acceptInvitation({ token }, { uid: 'uid-existing', email: 'new@example.org', emailVerified: true }, 'corr')).rejects.toMatchObject({ code: 'INVITATION_INVALID' });
     expect(calls).toEqual([]);
   });
