@@ -327,6 +327,38 @@ describe('participant conversation engine (R15-R22, R31-R42)', () => {
     expect(await t.prisma.enrollment.count({ where: { state: 'COMPLETED' } })).toBe(1);
   });
 
+  it('consent evidence records the notice version that was shown, even when the notice changes before the reply (R14, R17)', async () => {
+    const version = async () => (await t.prisma.organization.findUniqueOrThrow({ where: { id: orgId } })).participantNoticeVersion;
+    const changeNotice = async (text: string) => {
+      const current = (await request(t.server).get('/api/v1/organization').set('Authorization', admin.authorization).expect(200)).body;
+      await request(t.server).patch('/api/v1/organization').set('Authorization', admin.authorization).send({ ...current, participantNotice: text }).expect(200);
+    };
+    // Enrollment: the prompt rendered version N; the notice changes; the acceptance records N.
+    await sim('text', { phone: '+923001000098', text: 'hi', profileName: 'Omar' }).expect(200);
+    await drainJobs(t);
+    const omar = await t.prisma.contact.findUniqueOrThrow({ where: { organizationId_phoneE164: { organizationId: orgId, phoneE164: '+923001000098' } } });
+    await say(omar.id, 'Omar Ali');
+    expect((await last(omar.id)).text).toContain('Reply YES to agree');
+    const shownToOmar = await version();
+    await changeNotice('Updated notice: this consultation is voluntary and your answers stay with authorized administrators only. Reply STOP to leave.');
+    expect(await version()).toBe(shownToOmar + 1);
+    await say(omar.id, 'YES');
+    const omarEvents = await t.prisma.consentEvent.findMany({ where: { contactId: omar.id, type: 'GRANTED' } });
+    expect(omarEvents.length).toBeGreaterThan(0);
+    expect(new Set(omarEvents.map((event) => event.wordingVersion))).toEqual(new Set([String(shownToOmar)]));
+    // Known contact: START shows the prompt with version N+1; the notice changes again; YES records N+1.
+    const zara = (await request(t.server).post('/api/v1/contacts').set('Authorization', manager.authorization).send({ name: 'Zara Known', phone: '+923001000097' }).expect(201)).body;
+    await say(zara.id, 'START');
+    expect((await last(zara.id)).text).toContain('Reply YES to agree');
+    const shownToZara = await version();
+    await changeNotice('Notice v+2: this consultation is voluntary and your answers stay with authorized administrators only. Reply STOP to leave.');
+    expect(await version()).toBe(shownToZara + 1);
+    await say(zara.id, 'YES');
+    const zaraEvents = await t.prisma.consentEvent.findMany({ where: { contactId: zara.id, type: 'GRANTED' } });
+    expect(zaraEvents.length).toBeGreaterThan(0);
+    expect(new Set(zaraEvents.map((event) => event.wordingVersion))).toEqual(new Set([String(shownToZara)]));
+  });
+
   it('forged or mismatched tokens and invalid options never create answers (R41)', async () => {
     const participation = await t.prisma.participation.findFirstOrThrow({ where: { runId, contactId: bilal } });
     const countBefore = await t.prisma.answer.count({ where: { participationId: participation.id } });

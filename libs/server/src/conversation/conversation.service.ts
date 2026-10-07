@@ -12,7 +12,7 @@ import { DeliveryService } from '../messaging/delivery.service';
 import { MessagePlanner } from '../messaging/planner';
 import type { RenderedMessage } from '../messaging/rendered';
 import { getLogger } from '../observability/logger';
-import { asJson } from '../persistence/json';
+import { asJson, asJsonOrNull } from '../persistence/json';
 import type { ActionBinding, Contact, Conversation, InboundEvent, MessagingConnection, Organization, Participation, Prisma } from '../persistence/prisma.service';
 import { TenantDbFactory } from '../persistence/tenant-db.factory';
 import type { TenantTx } from '../persistence/tenant-db';
@@ -193,12 +193,14 @@ export class ConversationService implements JobHandler {
         await this.queue(s, 'ENROLLMENT', this.planner.text(copy.enrollmentNameInvalid), `enroll:${s.event.id}`);
         return 'ENROLLMENT_NAME_INVALID';
       }
-      await tx.enrollment.update({ where: { id: active.id }, data: { proposedName: name, state: 'AWAITING_CONSENT', lastInboundAt: s.now } });
+      // The notice version is bound to the prompt that renders it, not to the moment of acceptance.
+      await tx.enrollment.update({ where: { id: active.id }, data: { proposedName: name, state: 'AWAITING_CONSENT', lastInboundAt: s.now, noticeVersion: s.org.participantNoticeVersion } });
       await this.queueConsentPrompt(s, null);
       return 'ENROLLMENT_NAME_RECORDED';
     }
     const reply = parseConsentReply(s.payload.text);
     if (!reply) {
+      await tx.enrollment.update({ where: { id: active.id }, data: { lastInboundAt: s.now, noticeVersion: s.org.participantNoticeVersion } });
       await this.queueConsentPrompt(s, null);
       return 'ENROLLMENT_CONSENT_REPROMPT';
     }
@@ -207,10 +209,10 @@ export class ConversationService implements JobHandler {
       await this.queue(s, 'ENROLLMENT', this.planner.text(copy.consentDeclined), `enroll:${s.event.id}`);
       return 'ENROLLMENT_DECLINED';
     }
-    return this.completeEnrollment(s, active.id, active.proposedName ?? 'Participant');
+    return this.completeEnrollment(s, active.id, active.proposedName ?? 'Participant', active.noticeVersion);
   }
 
-  private async completeEnrollment(s: Session, enrollmentId: string, name: string): Promise<string> {
+  private async completeEnrollment(s: Session, enrollmentId: string, name: string, shownNoticeVersion: number): Promise<string> {
     const phone = waIdToE164(s.event.senderIdentity);
     // A placeholder row may exist from earlier enrollment replies; it becomes the real contact now.
     const contact = await s.tx.contact.upsert({
@@ -218,7 +220,7 @@ export class ConversationService implements JobHandler {
       create: { organizationId: s.ctx.organizationId, name, phoneE164: phone, providerIdentity: s.event.senderIdentity, profileProvenance: asJson({}) },
       update: { name, providerIdentity: s.event.senderIdentity, archivedAt: null, profileProvenance: asJson({}) },
     });
-    await this.consent.grantFromParticipant(s.tx, contact.id, s.now, String(s.org.participantNoticeVersion), s.event.providerMessageId);
+    await this.consent.grantFromParticipant(s.tx, contact.id, s.now, String(shownNoticeVersion), s.event.providerMessageId);
     await s.tx.enrollment.update({ where: { id: enrollmentId }, data: { state: 'COMPLETED', lastInboundAt: s.now } });
     await s.tx.conversation.upsert({
       where: { organizationId_contactId: { organizationId: s.ctx.organizationId, contactId: contact.id } },
@@ -233,7 +235,8 @@ export class ConversationService implements JobHandler {
 
   private async offerConsent(s: Session): Promise<string> {
     if (!s.contact || !s.conversation) return 'NO_CONTACT';
-    await s.tx.conversation.update({ where: { id: s.conversation.id }, data: { pendingInput: 'CONSENT' } });
+    // Remember which notice version this prompt shows; the reply grants consent to that wording.
+    await s.tx.conversation.update({ where: { id: s.conversation.id }, data: { pendingInput: 'CONSENT', pendingContext: asJson({ noticeVersion: s.org.participantNoticeVersion }) } });
     await this.queueConsentPrompt(s, s.contact);
     return 'CONSENT_OFFERED';
   }
@@ -252,13 +255,14 @@ export class ConversationService implements JobHandler {
 
   private async applyConsentReply(s: Session, reply: 'ACCEPT' | 'DECLINE'): Promise<string> {
     if (!s.contact || !s.conversation) return 'NO_CONTACT';
-    await s.tx.conversation.update({ where: { id: s.conversation.id }, data: { pendingInput: null } });
+    const shownNoticeVersion = (s.conversation.pendingContext as { noticeVersion?: number } | null)?.noticeVersion ?? s.org.participantNoticeVersion;
+    await s.tx.conversation.update({ where: { id: s.conversation.id }, data: { pendingInput: null, pendingContext: asJsonOrNull(null) } });
     if (reply === 'DECLINE') {
       await this.replyText(s, copy.consentDeclined, 'consent');
       return 'CONSENT_DECLINED';
     }
-    await this.consent.grantFromParticipant(s.tx, s.contact.id, s.now, String(s.org.participantNoticeVersion), s.event.providerMessageId);
-    await this.audit.record(s.ctx, { action: 'consent.granted', resourceType: 'contact', resourceId: s.contact.id, metadata: { source: 'participant_reply' } }, s.tx);
+    await this.consent.grantFromParticipant(s.tx, s.contact.id, s.now, String(shownNoticeVersion), s.event.providerMessageId);
+    await this.audit.record(s.ctx, { action: 'consent.granted', resourceType: 'contact', resourceId: s.contact.id, metadata: { source: 'participant_reply', noticeVersion: shownNoticeVersion } }, s.tx);
     await this.replyText(s, copy.consentGranted(s.orgCopy), 'consent');
     return 'CONSENT_GRANTED';
   }
