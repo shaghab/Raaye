@@ -1,6 +1,6 @@
 # Raaye: Start the build
 
-This pack contains specifications for building Raaye, not an already implemented application.
+This pack contains the specifications for Raaye. The repository now also contains the implementation built from them; see `README.md` for how to run it and `plan/` for acceptance and verification evidence.
 
 ## Files
 
@@ -40,7 +40,7 @@ Docker startup. Map R01-R60 to code/tests in plan/acceptance.md and record actua
 verification outcomes in plan/verification.md.
 
 Do not provision GCP, send real WhatsApp messages, change Meta assets, add Terraform
-or CI/CD, create a remote repository, or push code. Preserve unrelated existing work.
+or CI/CD, or create a new remote repository. Preserve unrelated existing work.
 
 Finish with local startup instructions, demo access, actual verification results,
 and a precise list of any remaining gaps. Do not claim that unrun tests passed or
@@ -64,6 +64,10 @@ These decisions fill implementation gaps; the product owner's stated requirement
 
 Use the generated application's README to start Docker. Sign in as each role. Run a survey through the simulator, including optional onboarding and a multi-select question. Test an edit before and after its deadline, STOP after scheduling, aggregate exports, and result sharing after closure.
 
-Check `plan/acceptance.md` and `plan/verification.md`, not only the agent's summary. Local implementation and tests can be complete while real-account onboarding, published templates/Flows, and live-delivery verification remain outstanding.
+Check `plan/acceptance.md` and `plan/verification.md`, not only the agent's summary.
+
+## Execution policy for this repository
+
+The product owner's build instruction (7 October 2026) authorized the coding agent to commit, push the designated feature branch, open and update a pull request, create GitHub issues for deferred review findings, reply to review comments, and resolve review threads. Merging, force-pushing, changing branch protections, provisioning GCP, enabling billing, sending real WhatsApp messages, modifying Meta assets, and adding Terraform or CI/CD remain prohibited. `AGENTS.md` §2 records the same policy. Local implementation and tests can be complete while real-account onboarding, published templates/Flows, and live-delivery verification remain outstanding.
 
 Do not run two coding agents concurrently against the same working tree. Use one agent as the initial implementer. A later verification pass in the other tool should use a clean commit/worktree and the same requirements, without silently changing the scope.

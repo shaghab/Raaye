@@ -22,7 +22,9 @@ Explicit subsequent product-owner instructions override earlier product choices.
 
 The user has already answered the product questions. Do not ask them again. Make reasonable implementation decisions, record material assumptions, and continue. Implement working code rather than ending with a plan.
 
-The authorized outcome is a locally runnable MVP, including tests, Docker, and a real-provider integration path. It does not include creating cloud resources, enabling billing, sending messages to real people, changing Meta assets, creating a GitHub repository, or pushing code remotely.
+The authorized outcome is a locally runnable MVP, including tests, Docker, and a real-provider integration path. It does not include creating cloud resources, enabling billing, sending messages to real people, changing Meta assets, or creating a new remote repository.
+
+**Execution policy update (product owner, 7 October 2026).** For this repository the product owner explicitly authorized committing, pushing the designated feature branch, opening and updating a pull request, creating GitHub issues for deferred review findings, replying to review comments, and resolving review threads. Earlier guidance in this file and in `START-HERE.md` that prohibited committing or pushing is superseded by that instruction. Still prohibited: merging, force-pushing, changing branch protections, provisioning GCP, enabling billing, sending real WhatsApp messages, modifying Meta assets, adding Terraform, and adding CI/CD pipelines. The product scope is unchanged.
 
 Never execute a paid, public, destructive, or externally visible operation merely because credentials happen to exist in the environment. Real test sends and live deployment need a separate explicit instruction. Local synthetic tests and ordinary repository edits are authorized.
 

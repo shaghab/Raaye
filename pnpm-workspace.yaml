@@ -1,0 +1,14 @@
+onlyBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
+  - '@swc/core'
+  - esbuild
+  - nx
+  - prisma
+  - '@parcel/watcher'
+  - lmdb
+  - msgpackr-extract
+  - unrs-resolver
+  - protobufjs
+  - '@firebase/util'
+  - '@scarf/scarf'

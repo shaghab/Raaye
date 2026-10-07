@@ -1,0 +1,10 @@
+{
+  "flow_token": "bound-action-token",
+  "action_token": "bound-action-token",
+  "city": "Lahore",
+  "district": "",
+  "gender": "WOMAN",
+  "age_band": "AGE_25_34",
+  "occupation": "Teacher",
+  "membership": "MEMBER"
+}

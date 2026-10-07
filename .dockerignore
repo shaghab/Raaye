@@ -1,0 +1,14 @@
+node_modules
+dist
+tmp
+coverage
+.nx
+.angular
+playwright-report
+test-results
+.git
+.env
+.env.*
+!.env.example
+libs/server/src/persistence/generated
+*.log

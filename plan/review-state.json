@@ -1,0 +1,705 @@
+{
+  "branch": "claude/great-ptolemy-ro6mqe",
+  "pullRequest": {
+    "number": 3,
+    "url": "https://github.com/shaghab/Raaye/pull/3",
+    "base": "main"
+  },
+  "reviewRequests": [
+    {
+      "headSha": "596ac4cb65fdaf8c47e567639c9c7145c6fd02c9",
+      "requestedAt": "2026-10-07T08:13:04.122257+00:00",
+      "status": "completed",
+      "reviewId": 5439499431,
+      "reviewedAt": "2026-10-07T08:17:22Z",
+      "findings": 5
+    },
+    {
+      "headSha": "8c1ed4f",
+      "requestedAt": "2026-10-07T08:28:39.049907+00:00",
+      "status": "completed",
+      "round": 2,
+      "reviewId": 5439722008,
+      "reviewedAt": "2026-10-07T08:35:55Z",
+      "findings": 6
+    },
+    {
+      "headSha": "0ddb201",
+      "requestedAt": "2026-10-07T08:44:29.785338+00:00",
+      "status": "completed",
+      "round": 3,
+      "reviewId": 5439873411,
+      "reviewedAt": "2026-10-07T08:50:10Z",
+      "findings": 4
+    },
+    {
+      "headSha": "721765b",
+      "requestedAt": "2026-10-07T09:15:15.161625+00:00",
+      "status": "completed",
+      "round": 4,
+      "reviewId": 5440260147,
+      "reviewedAt": "2026-10-07T09:23:18Z",
+      "findings": 6
+    },
+    {
+      "headSha": "d6b9c6e",
+      "requestedAt": "2026-10-07T09:42:25.584429+00:00",
+      "status": "completed",
+      "round": 5,
+      "reviewId": 5440542998,
+      "reviewedAt": "2026-10-07T09:48:57Z",
+      "findings": 6
+    },
+    {
+      "headSha": "a583a1e",
+      "requestedAt": "2026-10-07T10:07:57.863835+00:00",
+      "status": "completed",
+      "round": 6,
+      "reviewId": 5440805333,
+      "reviewedAt": "2026-10-07T10:12:10Z",
+      "findings": 2
+    },
+    {
+      "headSha": "09d00d3",
+      "requestedAt": "2026-10-07T10:23:24.202643+00:00",
+      "status": "completed",
+      "round": 7,
+      "reviewId": 5440971685,
+      "reviewedAt": "2026-10-07T10:27:57Z",
+      "findings": 2
+    },
+    {
+      "headSha": "6f06ac3",
+      "requestedAt": "2026-10-07T10:35:08.928581+00:00",
+      "status": "completed",
+      "round": 8,
+      "reviewId": 5441082778,
+      "reviewedAt": "2026-10-07T10:39:10Z",
+      "findings": 1
+    },
+    {
+      "headSha": "bd550e2",
+      "requestedAt": "2026-10-07T10:46:41.322814+00:00",
+      "status": "completed",
+      "round": 9,
+      "reviewId": 5441192963,
+      "reviewedAt": "2026-10-07T10:50:20Z",
+      "findings": 2
+    },
+    {
+      "headSha": "af1d892",
+      "requestedAt": "2026-10-07T11:00:39.440964+00:00",
+      "status": "completed",
+      "round": 10,
+      "reviewId": 5441343612,
+      "reviewedAt": "2026-10-07T11:03:37Z",
+      "findings": 1
+    },
+    {
+      "headSha": "6dc1303",
+      "requestedAt": "2026-10-07T11:37:04.032955+00:00",
+      "status": "completed",
+      "round": 11,
+      "reviewId": 5441745989,
+      "reviewedAt": "2026-10-07T11:42:41Z",
+      "findings": 3
+    },
+    {
+      "headSha": "964f7d5",
+      "requestedAt": "2026-10-07T11:51:06.167046+00:00",
+      "status": "completed",
+      "round": 12,
+      "reviewId": 5441868889,
+      "reviewedAt": "2026-10-07T11:54:36Z",
+      "findings": 2
+    },
+    {
+      "headSha": "2c62a04",
+      "requestedAt": "2026-10-07T12:04:37.835552+00:00",
+      "status": "completed",
+      "round": 13,
+      "reviewCommentId": 6037569940,
+      "reviewedAt": "2026-10-07T12:07:55Z",
+      "findings": 0,
+      "outcome": "no findings"
+    },
+    {
+      "headSha": "dd2a4a9",
+      "requestedAt": "2026-10-07T12:29:11.141410+00:00",
+      "status": "completed",
+      "round": 14,
+      "requestCommentId": 6037801449,
+      "reviewId": 5442216754,
+      "reviewedAt": "2026-10-07T12:25:01Z",
+      "findings": 1,
+      "outcome": "1 P2 finding on the verification record"
+    },
+    {
+      "headSha": "2f871f3",
+      "requestedAt": "2026-10-07T12:36:21.830670+00:00",
+      "status": "completed",
+      "round": 15,
+      "requestCommentId": 6038024702,
+      "reviewCommentId": 6038069705,
+      "reviewedAt": "2026-10-07T12:38:16Z",
+      "findings": 0,
+      "outcome": "no findings"
+    }
+  ],
+  "processedFindings": [
+    {
+      "reviewId": 5439499431,
+      "commentId": 4204606582,
+      "threadId": "PRRT_kwDOU--Sjc6p0Kg_",
+      "priority": "P1",
+      "file": "libs/server/src/conversation/inbox.service.ts",
+      "title": "Commit inbox rows together with their jobs",
+      "action": "fixed",
+      "commit": "8be5788",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439499431,
+      "commentId": 4204606591,
+      "threadId": "PRRT_kwDOU--Sjc6p0KhF",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/meta.provider.ts",
+      "title": "Mark post-transmission resets as unknown",
+      "action": "fixed",
+      "commit": "dc3d263",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439499431,
+      "commentId": 4204606597,
+      "threadId": "PRRT_kwDOU--Sjc6p0KhI",
+      "priority": "P1",
+      "file": "libs/server/src/organizations/organization.service.ts",
+      "title": "Serialize the last-Admin check and mutation",
+      "action": "fixed",
+      "commit": "80f69a1",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439499431,
+      "commentId": 4204606603,
+      "threadId": "PRRT_kwDOU--Sjc6p0KhO",
+      "priority": "P1",
+      "file": "libs/server/src/jobs/jobs.service.ts",
+      "title": "Push database jobs to Cloud Tasks",
+      "action": "fixed",
+      "commit": "25fd95e",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439499431,
+      "commentId": 4204606612,
+      "threadId": "PRRT_kwDOU--Sjc6p0KhT",
+      "priority": "P2",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Replay statuses whose projection update failed",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/4",
+      "resolved": true,
+      "replied": true
+    },
+    {
+      "reviewId": 5439722008,
+      "commentId": 4204782311,
+      "threadId": "PRRT_kwDOU--Sjc6p0lzp",
+      "priority": "P1",
+      "file": "libs/server/src/surveys/audience.service.ts",
+      "title": "Preserve occupation filters when composing audiences",
+      "action": "fixed",
+      "commit": "986e04c",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439722008,
+      "commentId": 4204782316,
+      "threadId": "PRRT_kwDOU--Sjc6p0lzs",
+      "priority": "P1",
+      "file": "libs/server/src/contacts/contacts.service.ts",
+      "title": "Reset the service window when changing phone numbers",
+      "action": "fixed",
+      "commit": "8cdc1de",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439722008,
+      "commentId": 4204782329,
+      "threadId": "PRRT_kwDOU--Sjc6p0lzy",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/meta.provider.ts",
+      "title": "Resolve the access token from the sender connection",
+      "action": "fixed",
+      "commit": "3e16ab3",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439722008,
+      "commentId": 4204782333,
+      "threadId": "PRRT_kwDOU--Sjc6p0lz0",
+      "priority": "P2",
+      "file": "libs/server/src/contacts/import.service.ts",
+      "title": "Resume imports left in the confirmed state",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/5",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439722008,
+      "commentId": 4204782342,
+      "threadId": "PRRT_kwDOU--Sjc6p0lz7",
+      "priority": "P2",
+      "file": "libs/server/src/contacts/import.service.ts",
+      "title": "Return an error when import processing fails",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/6",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439722008,
+      "commentId": 4204782354,
+      "threadId": "PRRT_kwDOU--Sjc6p0l0C",
+      "priority": "P2",
+      "file": "libs/server/src/surveys/launch.service.ts",
+      "title": "Make concurrent launch retries idempotent",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/7",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439873411,
+      "commentId": 4204906817,
+      "threadId": "PRRT_kwDOU--Sjc6p05XX",
+      "priority": "P1",
+      "file": "libs/server/src/surveys/launch.service.ts",
+      "title": "Keep blocked survey activations retryable",
+      "action": "fixed",
+      "commit": "d988420",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439873411,
+      "commentId": 4204906827,
+      "threadId": "PRRT_kwDOU--Sjc6p05Xb",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/readiness.service.ts",
+      "title": "Honor disabled messaging connections",
+      "action": "fixed",
+      "commit": "09c9a95",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439873411,
+      "commentId": 4204906835,
+      "threadId": "PRRT_kwDOU--Sjc6p05Xh",
+      "priority": "P2",
+      "file": "libs/server/src/messaging/policy.ts",
+      "title": "Check only results consent for results invitations",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/8",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439873411,
+      "commentId": 4204906846,
+      "threadId": "PRRT_kwDOU--Sjc6p05Xs",
+      "priority": "P2",
+      "file": "libs/server/src/conversation/conversation.service.ts",
+      "title": "Preserve the newest inbound service-window timestamp",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/9",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440260147,
+      "commentId": 4205211492,
+      "threadId": "PRRT_kwDOU--Sjc6p1pkP",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/readiness.service.ts",
+      "title": "Add a provisioning path for live messaging connections",
+      "action": "fixed",
+      "commit": "ae6b367",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440260147,
+      "commentId": 4205211501,
+      "threadId": "PRRT_kwDOU--Sjc6p1pkW",
+      "priority": "P1",
+      "file": "libs/server/src/conversation/inbox.service.ts",
+      "title": "Reject webhook traffic for disabled connections",
+      "action": "fixed",
+      "commit": "3370b4f",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440260147,
+      "commentId": 4205211512,
+      "threadId": "PRRT_kwDOU--Sjc6p1pkb",
+      "priority": "P1",
+      "file": "libs/server/src/contacts/consent.service.ts",
+      "title": "Serialize consent decisions and cache recomputation",
+      "action": "fixed",
+      "commit": "ed2a877",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440260147,
+      "commentId": 4205211518,
+      "threadId": "PRRT_kwDOU--Sjc6p1pkf",
+      "priority": "P2",
+      "file": "apps/api/src/controllers/webhooks.controller.ts",
+      "title": "Fail closed when a connection's webhook secret is unresolved",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/10",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440260147,
+      "commentId": 4205211525,
+      "threadId": "PRRT_kwDOU--Sjc6p1pkj",
+      "priority": "P2",
+      "file": "libs/server/src/messaging/readiness.service.ts",
+      "title": "Scope template readiness to the requested operation",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/11",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440260147,
+      "commentId": 4205211532,
+      "threadId": "PRRT_kwDOU--Sjc6p1pkl",
+      "priority": "P2",
+      "file": "libs/server/src/reporting/sharing.service.ts",
+      "title": "Cancel queued result invitations when revoking a snapshot",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/12",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440542998,
+      "commentId": 4205442433,
+      "threadId": "PRRT_kwDOU--Sjc6p2N3g",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Claim the send before relying on the policy snapshot",
+      "action": "fixed",
+      "commit": "7450a06",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440542998,
+      "commentId": 4205442445,
+      "threadId": "PRRT_kwDOU--Sjc6p2N3o",
+      "priority": "P1",
+      "file": "libs/server/src/contacts/import.service.ts",
+      "title": "Reject future-dated imported consent evidence",
+      "action": "fixed",
+      "commit": "fe6baf4",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440542998,
+      "commentId": 4205442458,
+      "threadId": "PRRT_kwDOU--Sjc6p2N3w",
+      "priority": "P1",
+      "file": "libs/server/src/surveys/surveys.service.ts",
+      "title": "Serialize archive with launch",
+      "action": "fixed",
+      "commit": "0248830",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440542998,
+      "commentId": 4205442465,
+      "threadId": "PRRT_kwDOU--Sjc6p2N30",
+      "priority": "P2",
+      "file": "libs/server/src/jobs/jobs.service.ts",
+      "title": "Do not reset a renewed job lease",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/14",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440542998,
+      "commentId": 4205442471,
+      "threadId": "PRRT_kwDOU--Sjc6p2N34",
+      "priority": "P2",
+      "file": "libs/domain/src/lib/edit-window.ts",
+      "title": "Use ingress sequence to break timestamp ties",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/15",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440542998,
+      "commentId": 4205442477,
+      "threadId": "PRRT_kwDOU--Sjc6p2N39",
+      "priority": "P2",
+      "file": "apps/api/src/controllers/surveys.controller.ts",
+      "title": "Hide draft surveys from Viewer reads",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/16",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440805333,
+      "commentId": 4205652884,
+      "threadId": "PRRT_kwDOU--Sjc6p2vDk",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Keep the contact lock through the provider handoff",
+      "action": "fixed",
+      "commit": "74d8a46",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440805333,
+      "commentId": 4205652871,
+      "threadId": "PRRT_kwDOU--Sjc6p2vDY",
+      "priority": "P1",
+      "file": "libs/server/src/surveys/surveys.service.ts",
+      "title": "Serialize draft updates with survey launch",
+      "action": "fixed",
+      "commit": "4f0cb82",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440971685,
+      "commentId": 4205794656,
+      "threadId": "PRRT_kwDOU--Sjc6p3FwS",
+      "priority": "P1",
+      "file": "libs/server/src/surveys/surveys.service.ts",
+      "title": "Cancel active test runs when archiving",
+      "action": "fixed",
+      "commit": "1a10d91",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440971685,
+      "commentId": 4205794663,
+      "threadId": "PRRT_kwDOU--Sjc6p3FwX",
+      "priority": "P2",
+      "file": "libs/server/src/surveys/launch.service.ts",
+      "title": "Serialize test-run creation with draft edits",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/17",
+      "resolved": true
+    },
+    {
+      "reviewId": 5441082778,
+      "commentId": 4205888825,
+      "threadId": "PRRT_kwDOU--Sjc6p3UtI",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Refresh the clock immediately before provider handoff",
+      "action": "fixed",
+      "commit": "12494ad",
+      "resolved": true
+    },
+    {
+      "reviewId": 5441192963,
+      "commentId": 4205980818,
+      "threadId": "PRRT_kwDOU--Sjc6p3jOP",
+      "priority": "P1",
+      "file": "libs/server/src/conversation/conversation.service.ts",
+      "title": "Record the consent wording that was actually shown",
+      "action": "fixed",
+      "commit": "6d95bbe",
+      "resolved": true
+    },
+    {
+      "reviewId": 5441192963,
+      "commentId": 4205980822,
+      "threadId": "PRRT_kwDOU--Sjc6p3jOS",
+      "priority": "P1",
+      "file": "libs/server/src/surveys/launch.service.ts",
+      "title": "Recheck archive state when creating a test run",
+      "action": "fixed",
+      "commit": "c3a4a09",
+      "resolved": true
+    },
+    {
+      "reviewId": 5441343612,
+      "commentId": 4206097057,
+      "threadId": "PRRT_kwDOU--Sjc6p31dL",
+      "priority": "P1",
+      "file": "libs/server/src/conversation/conversation.service.ts",
+      "title": "Bind the notice version to each consent action",
+      "action": "fixed",
+      "commit": "368dece",
+      "resolved": true
+    },
+    {
+      "reviewId": 5441745989,
+      "commentId": 4206436885,
+      "threadId": "PRRT_kwDOU--Sjc6p4rEz",
+      "priority": "P1",
+      "file": "libs/server/src/organizations/organization.service.ts",
+      "title": "Serialize notice version updates with notice text",
+      "action": "fixed",
+      "commit": "1f0941e",
+      "resolved": true
+    },
+    {
+      "reviewId": 5441745989,
+      "commentId": 4206436894,
+      "threadId": "PRRT_kwDOU--Sjc6p4rE3",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Make delivery-state promotion atomic",
+      "action": "fixed",
+      "commit": "4530169",
+      "resolved": true
+    },
+    {
+      "reviewId": 5441745989,
+      "commentId": 4206436902,
+      "threadId": "PRRT_kwDOU--Sjc6p4rE9",
+      "priority": "P2",
+      "file": "libs/server/src/surveys/launch.service.ts",
+      "title": "Require the profile Flow before launching onboarding",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/18",
+      "resolved": true
+    },
+    {
+      "reviewId": 5441868889,
+      "commentId": 4206542599,
+      "threadId": "PRRT_kwDOU--Sjc6p47yq",
+      "priority": "P1",
+      "file": "libs/server/src/conversation/answer.service.ts",
+      "title": "Serialize answer writes with survey closure",
+      "action": "fixed",
+      "commit": "56b2580",
+      "resolved": true
+    },
+    {
+      "reviewId": 5441868889,
+      "commentId": 4206542607,
+      "threadId": "PRRT_kwDOU--Sjc6p47yu",
+      "priority": "P2",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Keep invitation failure state aligned with status promotion",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/19",
+      "resolved": true
+    },
+    {
+      "reviewId": 5442216754,
+      "commentId": 4206827128,
+      "threadId": "PRRT_kwDOU--Sjc6p5n_C",
+      "priority": "P2",
+      "file": "plan/verification.md",
+      "title": "Correct the final verification commit attribution",
+      "action": "corrected-in-record",
+      "commit": "2f871f3",
+      "resolved": true,
+      "note": "Corrected in the round-14 record commit (verification record only).",
+      "replyCommentId": 4206931088
+    }
+  ],
+  "issues": [
+    {
+      "number": 4,
+      "url": "https://github.com/shaghab/Raaye/issues/4",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204606612"
+    },
+    {
+      "number": 5,
+      "url": "https://github.com/shaghab/Raaye/issues/5",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204782333"
+    },
+    {
+      "number": 6,
+      "url": "https://github.com/shaghab/Raaye/issues/6",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204782342"
+    },
+    {
+      "number": 7,
+      "url": "https://github.com/shaghab/Raaye/issues/7",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204782354"
+    },
+    {
+      "number": 8,
+      "url": "https://github.com/shaghab/Raaye/issues/8",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204906835"
+    },
+    {
+      "number": 9,
+      "url": "https://github.com/shaghab/Raaye/issues/9",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204906846"
+    },
+    {
+      "number": 10,
+      "url": "https://github.com/shaghab/Raaye/issues/10",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205211518"
+    },
+    {
+      "number": 11,
+      "url": "https://github.com/shaghab/Raaye/issues/11",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205211525"
+    },
+    {
+      "number": 12,
+      "url": "https://github.com/shaghab/Raaye/issues/12",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205211532"
+    },
+    {
+      "number": 13,
+      "url": "https://github.com/shaghab/Raaye/issues/13",
+      "priority": "Needs triage",
+      "source": "self-identified while fixing https://github.com/shaghab/Raaye/pull/3#discussion_r4205211492 (first organization/Admin bootstrap in a live deployment)"
+    },
+    {
+      "number": 14,
+      "url": "https://github.com/shaghab/Raaye/issues/14",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205442465"
+    },
+    {
+      "number": 15,
+      "url": "https://github.com/shaghab/Raaye/issues/15",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205442471"
+    },
+    {
+      "number": 16,
+      "url": "https://github.com/shaghab/Raaye/issues/16",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205442477"
+    },
+    {
+      "number": 17,
+      "url": "https://github.com/shaghab/Raaye/issues/17",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205794663"
+    },
+    {
+      "number": 18,
+      "url": "https://github.com/shaghab/Raaye/issues/18",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4206436902"
+    },
+    {
+      "number": 19,
+      "url": "https://github.com/shaghab/Raaye/issues/19",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4206542607"
+    }
+  ],
+  "blockers": [],
+  "updatedAt": "2026-10-07T12:40:25.428426+00:00"
+}
