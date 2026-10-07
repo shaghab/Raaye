@@ -39,7 +39,12 @@ export class SweepService {
     const now = this.clock.now();
     const bucket = Math.floor(now.getTime() / 60_000);
     const recoveredLeases = await this.jobs.recoverExpiredLeases(now);
-    const dueOpen = await this.prisma.surveyRun.findMany({ where: { state: 'SCHEDULED', opensAt: { lte: now } }, select: { id: true, organizationId: true } });
+    // Due scheduled runs, plus active runs whose dispatch readiness check failed: both go back
+    // through the activation handler every minute until they dispatch or reach their closing time.
+    const dueOpen = await this.prisma.surveyRun.findMany({
+      where: { OR: [{ state: 'SCHEDULED', opensAt: { lte: now } }, { state: 'ACTIVE', dispatchBlockReason: { not: null }, closesAt: { gt: now } }] },
+      select: { id: true, organizationId: true },
+    });
     let activations = 0;
     for (const run of dueOpen) {
       const result = await this.jobs.enqueue(this.prisma, { organizationId: run.organizationId, kind: 'ACTIVATE_SURVEY', entityId: run.id, dedupeKey: `activate:${run.id}:sweep:${bucket}`, dueAt: now, priority: JOB_PRIORITY.lifecycle, maxAttempts: 5 });

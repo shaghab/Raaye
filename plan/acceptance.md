@@ -28,7 +28,7 @@ Status legend: **Done** = implemented with the listed evidence; **Done (local)**
 | R22 | Missing template/Flow blocks live readiness explicitly | `MessagingReadinessService.check` (templates, Flows, secrets, disabled connection) | Unit `policy.spec.ts`, `env.spec.ts`; integration `surveys-launch.int-spec.ts` ("a disabled messaging connection…"); readiness UI | Done (local) |
 | R23 | Survey authoring limits and validation | `surveyDraftSchema`, `SurveysService.contentErrors` | Integration `surveys-launch.int-spec.ts` | Done |
 | R24 | Audience modes, preview, freeze at launch | `AudienceService`, `LaunchService.launch` | Integration `surveys-launch.int-spec.ts` | Done |
-| R25 | Scheduling with durable jobs | `jobs` table, `ActivateSurveyHandler` | Integration `surveys-launch.int-spec.ts`, `internal.int-spec.ts` | Done |
+| R25 | Scheduling with durable jobs | `jobs` table, `ActivateSurveyHandler`, `SweepService` (blocked activations retried every minute until the closing time) | Integration `surveys-launch.int-spec.ts` (including "a run whose readiness breaks before activation…"), `internal.int-spec.ts` | Done |
 | R26 | 48-hour default from intended opening | `computeClosesAt` | Unit `schedule.spec.ts`; integration launch tests | Done |
 | R27 | Automatic closing, expired-before-activation | `CloseSurveyHandler`, sweep | Integration `surveys-launch.int-spec.ts` | Done |
 | R28 | Test mode runs isolated from results | `createTestRun`, `isTest` flags | Integration `reporting.int-spec.ts` (test run excluded) | Done |

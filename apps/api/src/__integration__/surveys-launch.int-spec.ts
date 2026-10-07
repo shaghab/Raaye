@@ -390,12 +390,42 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     ]);
     expect(await t.prisma.invitation.count({ where: { runId, state: 'SUPPRESSED' } })).toBe(2);
     expect((await t.prisma.surveyRun.findUniqueOrThrow({ where: { id: runId } })).dispatchBlockReason).toBe('CONNECTION_DISABLED');
-    // Suppressed messages need an explicit Admin retry once the connection is enabled again.
+    // Re-enabling clears the block on the next sweep; suppressed messages still need an explicit Admin retry.
     await setConnectionEnabled(true);
     await request(t.server).post(`/api/v1/messages/${messages[0].id}/retry`).set('Authorization', admin.authorization).send({}).expect(202);
     await drainJobs(t);
     expect((await t.prisma.message.findUniqueOrThrow({ where: { id: messages[0].id } })).state).toBe('ACCEPTED');
     expect((await t.prisma.message.findUniqueOrThrow({ where: { id: messages[1].id } })).state).toBe('SUPPRESSED');
+    expect((await t.prisma.surveyRun.findUniqueOrThrow({ where: { id: runId } })).dispatchBlockReason).toBeNull();
     await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
+  });
+
+  it('a run whose readiness breaks before activation keeps its state and is retried by the sweep until repaired (R25, R43)', async () => {
+    const id = await createSurvey('Blocked activation survey', { audience: { mode: 'SELECTED', contactIds: [contacts.Chaudhry, contacts.Dua] } });
+    const opensAt = '2026-10-11T04:00:00.000Z';
+    const scheduled = (await request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).send({ mode: 'SCHEDULED', opensAt }).expect(200)).body;
+    const runId: string = scheduled.liveRun.id;
+    await setConnectionEnabled(false);
+    t.clock.set(new Date('2026-10-11T04:05:00.000Z'));
+    await drainJobs(t);
+    let detail = (await request(t.server).get(`/api/v1/surveys/${id}`).set('Authorization', viewer.authorization).expect(200)).body;
+    expect(detail.state).toBe('SCHEDULED');
+    expect(detail.liveRun).toMatchObject({ state: 'SCHEDULED', activatedAt: null, dispatchBlockReason: 'CONNECTION_DISABLED' });
+    expect(await t.prisma.message.count({ where: { runId } })).toBe(0);
+    expect(await t.prisma.auditEvent.count({ where: { action: 'survey.activation_blocked', resourceId: id } })).toBe(1);
+    // Still blocked a minute later: the sweep retries without duplicating work or audit noise.
+    t.clock.set(new Date('2026-10-11T04:06:00.000Z'));
+    await drainJobs(t);
+    expect((await t.prisma.surveyRun.findUniqueOrThrow({ where: { id: runId } })).state).toBe('SCHEDULED');
+    expect(await t.prisma.auditEvent.count({ where: { action: 'survey.activation_blocked', resourceId: id } })).toBe(1);
+    // Repaired: the next sweep activates the run and dispatches every pending invitation.
+    await setConnectionEnabled(true);
+    t.clock.set(new Date('2026-10-11T04:07:30.000Z'));
+    await drainJobs(t);
+    detail = (await request(t.server).get(`/api/v1/surveys/${id}`).set('Authorization', viewer.authorization).expect(200)).body;
+    expect(detail.state).toBe('ACTIVE');
+    expect(detail.liveRun).toMatchObject({ state: 'ACTIVE', activatedAt: '2026-10-11T04:07:30.000Z', dispatchBlockReason: null });
+    expect(await t.prisma.message.count({ where: { runId, state: 'ACCEPTED' } })).toBe(2);
+    t.clock.set(new Date('2026-10-10T09:00:00.000Z'));
   });
 });

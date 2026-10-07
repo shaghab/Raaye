@@ -210,7 +210,12 @@ export class LaunchService {
     }
   }
 
-  /** ACTIVATE_SURVEY handler: activate when due, then queue remaining invitations in bounded batches. */
+  /**
+   * ACTIVATE_SURVEY handler: activate when due, then queue remaining invitations in bounded batches.
+   * Readiness is verified before the run is committed as active. A blocked run keeps its state and
+   * records the blocker; the sweep re-enqueues it every minute until messaging is repaired or the
+   * run reaches its closing time, when it closes without sending.
+   */
   async activateRun(ctx: SystemContext, runId: string): Promise<void> {
     const db = this.dbFactory.for(ctx);
     const now = this.clock.now();
@@ -222,17 +227,23 @@ export class LaunchService {
       return;
     }
     if (now.getTime() < run.opensAt.getTime() - 60_000) return;
+    const readiness = await this.readiness.check(ctx, { needFlows: flowsNeeded(run.revision) });
+    if (!readiness.ok || !readiness.connection) {
+      const reason = readiness.blockers.map((blocker) => blocker.code).join(',') || 'NOT_READY';
+      await db.$transaction(async (tx) => {
+        // Conditional update so concurrent activation attempts record one audit entry per reason change.
+        const changed = await tx.surveyRun.updateMany({ where: { id: runId, OR: [{ dispatchBlockReason: null }, { dispatchBlockReason: { not: reason } }] }, data: { dispatchBlockReason: reason } });
+        if (changed.count === 1) await this.audit.record(ctx, { action: 'survey.activation_blocked', resourceType: 'survey', resourceId: run.surveyId, metadata: { runId, state: run.state, reason } }, tx);
+      });
+      this.logger.warn({ runId, state: run.state, reason }, 'Activation blocked: messaging is not ready; the sweep retries until the closing time');
+      return;
+    }
     if (run.state === 'SCHEDULED') {
       await db.$transaction(async (tx) => {
         await tx.surveyRun.updateMany({ where: { id: runId, state: 'SCHEDULED' }, data: { state: 'ACTIVE', activatedAt: now } });
         if (run.kind === 'LIVE') await tx.survey.updateMany({ where: { id: run.surveyId, state: 'SCHEDULED' }, data: { state: 'ACTIVE' } });
         await this.audit.record(ctx, { action: 'survey.activated', resourceType: 'survey', resourceId: run.surveyId, metadata: { runId, late: now.getTime() - run.opensAt.getTime() > 60_000 } }, tx);
       });
-    }
-    const readiness = await this.readiness.check(ctx, { needFlows: flowsNeeded(run.revision) });
-    if (!readiness.ok || !readiness.connection) {
-      await db.surveyRun.update({ where: { id: runId }, data: { dispatchBlockReason: readiness.blockers.map((blocker) => blocker.code).join(',') || 'NOT_READY' } });
-      throw new DomainError('TEMPLATE_NOT_READY', 'Dispatch blocked: messaging is not ready', { blockers: readiness.blockers }, undefined, 503);
     }
     if (run.dispatchBlockReason) await db.surveyRun.update({ where: { id: runId }, data: { dispatchBlockReason: null } });
     const connection = readiness.connection;
