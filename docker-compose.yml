@@ -1,0 +1,118 @@
+# Raaye local stack: PostgreSQL, Firebase Auth emulator, API, worker, bootstrap (migrate + seed) and the dashboard.
+# Usage: cp .env.example .env && docker compose up --build -d   →  http://localhost:8080
+name: raaye
+
+x-app-env: &app-env
+  APP_ENV: ${APP_ENV:-local}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: postgresql://raaye:raaye@db:5432/raaye
+  AUTH_MODE: ${AUTH_MODE:-emulator}
+  FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-demo-raaye}
+  FIREBASE_AUTH_EMULATOR_HOST: auth:9099
+  PUBLIC_AUTH_EMULATOR_URL: ${PUBLIC_AUTH_EMULATOR_URL:-http://localhost:9099}
+  WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
+  MESSAGING_MODE: ${MESSAGING_MODE:-mock}
+  JOB_DRIVER: ${JOB_DRIVER:-postgres}
+  ENABLE_SIMULATOR: ${ENABLE_SIMULATOR:-true}
+  ALLOW_DEMO_BOOTSTRAP: ${ALLOW_DEMO_BOOTSTRAP:-true}
+  INTERNAL_TASK_TOKEN: ${INTERNAL_TASK_TOKEN:-local-internal-task-token-change-me}
+  DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-Asia/Karachi}
+  META_GRAPH_VERSION: ${META_GRAPH_VERSION:-}
+  META_APP_ID: ${META_APP_ID:-}
+  META_APP_SECRET: ${META_APP_SECRET:-}
+  META_ACCESS_TOKEN: ${META_ACCESS_TOKEN:-}
+  META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
+  META_WABA_ID: ${META_WABA_ID:-}
+  META_PHONE_NUMBER_ID: ${META_PHONE_NUMBER_ID:-}
+  META_WEBHOOK_APP_KEY: ${META_WEBHOOK_APP_KEY:-}
+
+services:
+  db:
+    image: postgres:16.15-alpine
+    environment:
+      POSTGRES_USER: raaye
+      POSTGRES_PASSWORD: raaye
+      POSTGRES_DB: raaye
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - raaye-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raaye -d raaye"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  auth:
+    build:
+      context: .
+      dockerfile: infra/docker/auth.Dockerfile
+      args:
+        EXTRA_CA_DIR: ${EXTRA_CA_DIR:-infra/certs}
+    ports:
+      - "127.0.0.1:${AUTH_PORT:-9099}:9099"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9099/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  bootstrap:
+    build: &app-build
+      context: .
+      dockerfile: infra/docker/app.Dockerfile
+      target: runtime
+      args:
+        EXTRA_CA_DIR: ${EXTRA_CA_DIR:-infra/certs}
+    image: raaye-app:local
+    command: ["bootstrap"]
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: *app-build
+    image: raaye-app:local
+    command: ["api"]
+    environment: *app-env
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health/ready').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  worker:
+    build: *app-build
+    image: raaye-app:local
+    command: ["worker"]
+    environment: *app-env
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/app.Dockerfile
+      target: web
+      args:
+        EXTRA_CA_DIR: ${EXTRA_CA_DIR:-infra/certs}
+    image: raaye-web:local
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  raaye-db:
