@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { Clock } from '@raaye/domain';
 import { CLOCK } from '../clock/clock.service';
 import { APP_CONFIG, type AppConfig } from '../config/env';
-import { JOB_PRIORITY, JobsService } from '../jobs/jobs.service';
+import { JOB_PRIORITY, JobsService, type EnqueueInput } from '../jobs/jobs.service';
 import { DeliveryService } from '../messaging/delivery.service';
 import type { NormalizedInbound, NormalizedStatus } from '../messaging/webhook-parser';
 import { getLogger } from '../observability/logger';
@@ -56,35 +56,47 @@ export class InboxService {
         continue;
       }
       const isOptOut = event.kind === 'TEXT' && parseCommand(event.text)?.kind === 'STOP';
+      const jobFor = (eventId: string): EnqueueInput => ({
+        organizationId: connection.organizationId,
+        kind: 'PROCESS_INBOUND',
+        entityId: eventId,
+        dedupeKey: `inbound:${eventId}`,
+        dueAt: now,
+        priority: isOptOut ? JOB_PRIORITY.optOut : JOB_PRIORITY.inbound,
+        maxAttempts: 5,
+      });
       try {
-        const record = await this.prisma.inboundEvent.create({
-          data: {
-            organizationId: connection.organizationId,
-            connectionId: connection.id,
-            providerMessageId: event.providerMessageId,
-            senderIdentity: event.senderIdentity,
-            senderProfileName: event.senderProfileName,
-            kind: event.kind,
-            normalized: asJson({ kind: event.kind, text: event.text, actionId: event.actionId, flowResponse: event.flowResponse, contextMessageId: event.contextMessageId, rawType: event.rawType }),
-            providerAt: event.providerAt,
-            receivedAt: now,
-            rawPayload: options.rawPayload !== undefined && !options.simulated ? asJson(options.rawPayload) : undefined,
-            rawExpiresAt: options.rawPayload !== undefined && !options.simulated ? rawExpiresAt : null,
-            isSimulated: Boolean(options.simulated),
-          },
-        });
-        await this.jobs.enqueue(this.prisma, {
-          organizationId: connection.organizationId,
-          kind: 'PROCESS_INBOUND',
-          entityId: record.id,
-          dedupeKey: `inbound:${record.id}`,
-          dueAt: now,
-          priority: isOptOut ? JOB_PRIORITY.optOut : JOB_PRIORITY.inbound,
-          maxAttempts: 5,
+        // The inbox row and its processing job commit together: a delivery is either fully
+        // accepted (row + job) or not persisted at all, so the provider's retry can succeed.
+        await this.prisma.$transaction(async (tx) => {
+          const record = await tx.inboundEvent.create({
+            data: {
+              organizationId: connection.organizationId,
+              connectionId: connection.id,
+              providerMessageId: event.providerMessageId,
+              senderIdentity: event.senderIdentity,
+              senderProfileName: event.senderProfileName,
+              kind: event.kind,
+              normalized: asJson({ kind: event.kind, text: event.text, actionId: event.actionId, flowResponse: event.flowResponse, contextMessageId: event.contextMessageId, rawType: event.rawType }),
+              providerAt: event.providerAt,
+              receivedAt: now,
+              rawPayload: options.rawPayload !== undefined && !options.simulated ? asJson(options.rawPayload) : undefined,
+              rawExpiresAt: options.rawPayload !== undefined && !options.simulated ? rawExpiresAt : null,
+              isSimulated: Boolean(options.simulated),
+            },
+          });
+          await this.jobs.enqueue(tx, jobFor(record.id));
         });
         result.accepted += 1;
       } catch (error) {
         if (isUniqueViolation(error)) {
+          // Already delivered. If the earlier delivery left the row without a job (for
+          // example a crash between commit and acknowledgement), make sure it gets processed.
+          const existing = await this.prisma.inboundEvent.findUnique({
+            where: { organizationId_connectionId_providerMessageId: { organizationId: connection.organizationId, connectionId: connection.id, providerMessageId: event.providerMessageId } },
+            select: { id: true, processingState: true },
+          });
+          if (existing && existing.processingState === 'PENDING') await this.jobs.enqueue(this.prisma, jobFor(existing.id));
           result.duplicates += 1;
           continue;
         }
