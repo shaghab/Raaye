@@ -35,6 +35,13 @@ export interface CreateMessageInput {
 }
 
 const DELIVERY_RANK: Record<string, number> = { QUEUED: 0, ACCEPTED: 1, SENT: 2, DELIVERED: 3, READ: 4 };
+
+/** Delivery states that a callback of the given rank must never overwrite (unranked states such as UNKNOWN stay promotable). */
+function statesRankedAtLeast(rank: number): DeliveryState[] {
+  return Object.entries(DELIVERY_RANK)
+    .filter(([, value]) => value >= rank)
+    .map(([state]) => state as DeliveryState);
+}
 const MAX_SEND_ATTEMPTS = 5;
 /** The hand-off transaction spans one provider call (15 s timeout in the Meta adapter) plus the outcome writes. */
 const HANDOFF_TIMEOUT_MS = 60_000;
@@ -300,22 +307,25 @@ export class DeliveryService implements JobHandler {
     return 'RECORDED';
   }
 
+  /**
+   * Promote the display state without regression. The rank comparison is part of the UPDATE's
+   * WHERE clause, so concurrent callbacks (a READ racing a SENT) cannot overwrite a higher state.
+   */
   private async applyStatus(organizationId: string, messageId: string, status: NormalizedStatus): Promise<void> {
     const db = this.dbFactory.forOrganization(organizationId);
-    const message = await db.message.findUnique({ where: { id: messageId }, select: { deliveryState: true, lastStatusAt: true } });
-    if (!message) return;
-    const currentRank = DELIVERY_RANK[message.deliveryState] ?? -1;
     if (status.status === 'FAILED') {
-      if (currentRank < DELIVERY_RANK['DELIVERED']) {
-        await db.message.update({ where: { id: messageId }, data: { deliveryState: 'FAILED', lastErrorCode: status.errorCode ?? 'PROVIDER_FAILED', lastStatusAt: status.providerAt } });
-        await db.$transaction(async (tx) => this.markInvitation(tx, messageId, 'FAILED', status.errorCode ?? 'PROVIDER_FAILED'));
-      }
+      const changed = await db.message.updateMany({
+        where: { id: messageId, deliveryState: { notIn: statesRankedAtLeast(DELIVERY_RANK['DELIVERED']) } },
+        data: { deliveryState: 'FAILED', lastErrorCode: status.errorCode ?? 'PROVIDER_FAILED', lastStatusAt: status.providerAt },
+      });
+      if (changed.count === 1) await db.$transaction(async (tx) => this.markInvitation(tx, messageId, 'FAILED', status.errorCode ?? 'PROVIDER_FAILED'));
       return;
     }
     const newRank = DELIVERY_RANK[status.status] ?? 0;
-    if (newRank > currentRank) {
-      await db.message.update({ where: { id: messageId }, data: { deliveryState: status.status as DeliveryState, lastStatusAt: status.providerAt } });
-    }
+    await db.message.updateMany({
+      where: { id: messageId, deliveryState: { notIn: statesRankedAtLeast(newRank) } },
+      data: { deliveryState: status.status as DeliveryState, lastStatusAt: status.providerAt },
+    });
   }
 
   /** Match status events that arrived before their message row could be resolved. */

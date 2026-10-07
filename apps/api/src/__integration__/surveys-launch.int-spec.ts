@@ -658,4 +658,26 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     expect(await t.prisma.message.count({ where: { runId, state: 'ACCEPTED' } })).toBe(2);
     t.clock.set(new Date('2026-10-10T09:00:00.000Z'));
   });
+
+  it('delivery state never regresses under concurrent status callbacks (R44)', async () => {
+    const reader = await createContact('Reader Rabia', '+923001000035', 'GRANTED');
+    const id = await createSurvey('Status race', { audience: { mode: 'SELECTED', contactIds: [reader] } });
+    const launched = (await request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).send({ mode: 'NOW' }).expect(200)).body;
+    await drainJobs(t);
+    const message = await t.prisma.message.findFirstOrThrow({ where: { runId: launched.liveRun.id } });
+    expect(message.deliveryState).toBe('DELIVERED');
+    const delivery = t.app.get(DeliveryService);
+    const base = t.clock.now().getTime() + 60_000;
+    for (let round = 0; round < 5; round += 1) {
+      const at = (offset: number) => new Date(base + round * 10_000 + offset);
+      const status = (name: 'SENT' | 'DELIVERED' | 'READ', offset: number) =>
+        delivery.recordStatus(orgId, message.connectionId, { phoneNumberId: '', providerMessageId: message.providerMessageId ?? '', recipientIdentity: null, status: name, providerAt: at(offset), errorCode: null, errorTitle: null });
+      await Promise.all([status('READ', 3000), status('SENT', 1000), status('DELIVERED', 2000)]);
+      const after = await t.prisma.message.findUniqueOrThrow({ where: { id: message.id } });
+      expect(after.deliveryState).toBe('READ');
+      // The first READ fixes the timestamp; later lower-ranked callbacks never touch the row again.
+      expect(after.lastStatusAt?.toISOString()).toBe(new Date(base + 3000).toISOString());
+    }
+    await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
+  });
 });
