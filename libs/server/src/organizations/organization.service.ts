@@ -41,6 +41,11 @@ export function toOrganizationDto(org: Organization): OrganizationDto {
   };
 }
 
+/** Advisory lock key that serializes every acceptance and reconciliation concerning one Firebase identity. */
+function identityLockKey(firebaseUid: string): string {
+  return `identity:${firebaseUid}`;
+}
+
 @Injectable()
 export class OrganizationService {
   private readonly logger = getLogger('organizations');
@@ -268,13 +273,15 @@ export class OrganizationService {
    * created identity is the invitation's accepter (a commit whose acknowledgement was lost), 'rolled-back'
    * only when nothing references the identity, and 'unknown' otherwise, including when another
    * acceptance of the same person (the identity is usable as soon as it exists) has stored a user row
-   * for it, or when the database cannot be read. The rows are read only after a lock on the invitation
-   * row has waited for the failed transaction to finish resolving; a domain refusal raised inside the
-   * callback never committed, but the identity is still checked for other references before deletion.
+   * for it, or when the database cannot be read. The rows are read only after the identity lock has
+   * waited for any other acceptance of the same person and a lock on the invitation row has waited for
+   * the failed transaction to finish resolving; a domain refusal raised inside the callback never
+   * committed, but the identity is still checked for other references before deletion.
    */
   private async acceptanceOutcome(invitationId: string, firebaseUid: string): Promise<'rolled-back' | 'persisted' | 'unknown'> {
     try {
       return await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${identityLockKey(firebaseUid)}))`;
         await tx.$queryRaw`SELECT id FROM staff_invitations WHERE id = ${invitationId}::uuid FOR UPDATE`;
         const user = await tx.user.findUnique({ where: { firebaseUid }, select: { id: true } });
         if (!user) return 'rolled-back' as const;
@@ -289,6 +296,10 @@ export class OrganizationService {
   private async consumeInvitation(invitation: { id: string; organizationId: string; email: string; role: 'ADMIN' | 'SURVEY_MANAGER' | 'VIEWER' }, firebaseUid: string, displayName: string | undefined, correlationId: string): Promise<void> {
     const email = invitation.email;
     await this.prisma.$transaction(async (tx) => {
+      // Every acceptance and reconciliation that concerns one identity serializes on this lock, taken
+      // first: an acceptance of another invitation by the same person, even while it still waits for its
+      // organization lock, is therefore visible to a reconciliation before an identity can be deleted.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${identityLockKey(firebaseUid)}))`;
       // The organization row lock serializes acceptance with bootstrap re-runs and member administration:
       // a re-run's active-Admin count and the membership created here cannot interleave, and both paths
       // take the organization lock before touching invitations, so they never deadlock on each other.
