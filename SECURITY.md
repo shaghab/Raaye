@@ -3,7 +3,7 @@
 ## Identity and roles
 
 - Staff sign in with Firebase email/password; the API verifies ID tokens (emulator locally, live project in production). There is no self-registration: Admins create single-use, 72-hour, hashed invitation links bound to an email address.
-- Roles per `MVP.md`: **Admin** (everything, including identifiable answers, exports, sharing, staff, messaging configuration, timing defaults), **Survey Manager** (contacts, imports, surveys, dispatch, aggregates; never identifiable answers or Admin-only settings), **Viewer** (aggregates and aggregate exports only). Field-level permissions are enforced server-side; Managers cannot change duration or edit-window settings through the survey update DTO. Viewers see published surveys only: drafts are absent from their list and a draft read by id is reported as not found.
+- Roles per `MVP.md`: **Admin** (everything, including identifiable answers, exports, sharing, staff, messaging configuration, timing defaults), **Survey Manager** (contacts, imports, surveys, dispatch, aggregates; never identifiable answers or Admin-only settings), **Viewer** (aggregates and aggregate exports only). Field-level permissions are enforced server-side; Managers cannot change duration or edit-window settings through the survey update DTO. Viewers see published surveys only: drafts are absent from their list and overview, and a draft read by id is reported as not found.
 - Membership revocation takes effect on the next request; the last Admin cannot be demoted or removed.
 
 ## Tenant isolation

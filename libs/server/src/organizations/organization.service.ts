@@ -15,6 +15,7 @@ import { AuditService } from '../audit/audit.service';
 import { FirebaseAdminService, type VerifiedIdentity } from '../auth/token-verifier';
 import { CLOCK } from '../clock/clock.service';
 import { DomainError, notFound } from '../common/errors';
+import { getLogger } from '../observability/logger';
 import type { TenantContext } from '../common/context';
 import { APP_CONFIG, type AppConfig } from '../config/env';
 import { PrismaService, type Organization } from '../persistence/prisma.service';
@@ -42,6 +43,8 @@ export function toOrganizationDto(org: Organization): OrganizationDto {
 
 @Injectable()
 export class OrganizationService {
+  private readonly logger = getLogger('organizations');
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly dbFactory: TenantDbFactory,
@@ -223,6 +226,7 @@ export class OrganizationService {
     const invitation = await this.loadValidInvitation(input.token);
     const email = invitation.email;
     let firebaseUid: string;
+    let createdUid: string | null = null;
     if (identity) {
       if (identity.email !== email) throw new DomainError('INVITATION_EMAIL_MISMATCH', 'Sign in with the invited email address');
       firebaseUid = identity.uid;
@@ -231,7 +235,26 @@ export class OrganizationService {
       if (existingUid) throw new DomainError('INVITATION_INVALID', 'An account already exists for this email; sign in first, then accept the invitation');
       if (!input.password) throw new DomainError('VALIDATION_FAILED', 'Choose a password to create your account', undefined, [{ path: 'password', message: 'Required' }]);
       firebaseUid = await this.firebase.createUser(email, input.password, input.displayName);
+      createdUid = firebaseUid;
     }
+    try {
+      await this.consumeInvitation(invitation, firebaseUid, input.displayName, correlationId);
+    } catch (error) {
+      // The account was provisioned for this acceptance only. If the invitation can no longer be consumed
+      // (it expired during the lock wait, was revoked or was used), remove the account again so that no
+      // orphan credentials remain and a fresh invitation can be accepted with a new password.
+      if (createdUid) {
+        await this.firebase.deleteUser(createdUid).catch((cleanupError: unknown) => {
+          this.logger.warn({ err: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) }, 'Could not remove the account created for a failed invitation acceptance');
+        });
+      }
+      throw error;
+    }
+    return { email };
+  }
+
+  private async consumeInvitation(invitation: { id: string; organizationId: string; email: string; role: 'ADMIN' | 'SURVEY_MANAGER' | 'VIEWER' }, firebaseUid: string, displayName: string | undefined, correlationId: string): Promise<void> {
+    const email = invitation.email;
     await this.prisma.$transaction(async (tx) => {
       // The organization row lock serializes acceptance with bootstrap re-runs and member administration:
       // a re-run's active-Admin count and the membership created here cannot interleave, and both paths
@@ -247,8 +270,8 @@ export class OrganizationService {
       if (consumed.count !== 1) throw new DomainError('INVITATION_INVALID', 'This invitation is no longer valid');
       const user = await tx.user.upsert({
         where: { firebaseUid },
-        create: { firebaseUid, email, displayName: input.displayName ?? null },
-        update: { email, displayName: input.displayName ?? undefined },
+        create: { firebaseUid, email, displayName: displayName ?? null },
+        update: { email, displayName: displayName ?? undefined },
       });
       await tx.staffInvitation.update({ where: { id: invitation.id }, data: { acceptedByUserId: user.id } });
       await tx.organizationMembership.upsert({
@@ -269,7 +292,6 @@ export class OrganizationService {
         },
       });
     });
-    return { email };
   }
 
   private async loadValidInvitation(token: string) {
