@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { buildXlsx, deriveConsent, parseCsv, readXlsx } from '@raaye/domain';
+import { ConsentService, RetentionService } from '@raaye/server';
 import request from 'supertest';
 import { bootTestApp, resetDatabase, seedOrganization, seedUser, type SeededUser, type TestApp } from '../testing/harness';
 import { binaryParser } from '../testing/http';
@@ -191,6 +192,92 @@ describe('contacts, consent and imports (R10-R14, R50)', () => {
     const bilalAfter = await t.prisma.contact.findUnique({ where: { id: bilal?.id ?? '' } });
     expect(bilalAfter?.consentInvitations).toBe('WITHDRAWN');
     expect(bilalAfter?.consentResults).toBe('WITHDRAWN');
+  });
+
+  it('a failure during processing answers with an error, keeps the applied rows and resumes exactly once per row (R11)', async () => {
+    const total = 450;
+    const phone = (index: number) => `+9230020${String(index).padStart(5, '0')}`;
+    const csv = ['name,phone,groups', ...Array.from({ length: total }, (_, index) => `Bulk Person ${index + 1},${phone(index + 1)},Bulk`)].join('\n');
+    const uploaded = (await request(t.server).post('/api/v1/contact-imports').set('Authorization', manager.authorization).attach('file', Buffer.from(csv), 'bulk.csv').expect(201)).body;
+    const mapping = { columns: { name: 'name', phone: 'phone', groups: 'groups' }, defaultCountry: 'PK', duplicateMode: 'SKIP_EXISTING', consentAttestation: { scopes: ['SURVEY_INVITATIONS'], source: 'Signed forms', collectedAt: '2026-09-01T00:00:00Z', wordingVersion: 'v1', statement: true } };
+    const preview = (await request(t.server).post(`/api/v1/contact-imports/${uploaded.id}/preview`).set('Authorization', manager.authorization).send(mapping).expect(200)).body;
+    expect(preview.batch.summary).toMatchObject({ totalRows: total, create: total, error: 0 });
+    // The database connection drops while the second 200-row chunk is being applied.
+    const consent = t.app.get(ConsentService);
+    const applyEvents = consent.applyEvents.bind(consent);
+    let grants = 0;
+    const outage = jest.spyOn(consent, 'applyEvents').mockImplementation(async (tx, contactId, events) => {
+      grants += 1;
+      if (grants === 201) throw new Error('connection terminated unexpectedly');
+      return applyEvents(tx, contactId, events);
+    });
+    const failed = await request(t.server).post(`/api/v1/contact-imports/${uploaded.id}/confirm`).set('Authorization', manager.authorization).set('Idempotency-Key', 'import-bulk-1').expect(500);
+    outage.mockRestore();
+    expect(failed.body.code).toBe('IMPORT_PROCESSING_FAILED');
+    expect(failed.body.message).toContain('confirm the import again');
+    expect(failed.body.details).toMatchObject({ batchId: uploaded.id, state: 'FAILED', errorMessage: 'connection terminated unexpectedly', summary: { totalRows: total, create: 200, update: 0, skip: 0, error: 0 } });
+    const stopped = await t.prisma.importBatch.findUniqueOrThrow({ where: { id: uploaded.id } });
+    expect(stopped).toMatchObject({ state: 'FAILED', errorMessage: 'connection terminated unexpectedly', rawBytes: null });
+    expect(stopped.summary).toMatchObject({ create: 200 });
+    // Exactly the first chunk committed: 200 contacts, 200 rows stamped as applied, 250 still pending.
+    expect(await t.prisma.contact.count({ where: { organizationId: orgId, phoneE164: { startsWith: '+9230020' } } })).toBe(200);
+    expect(await t.prisma.importRow.count({ where: { batchId: uploaded.id, appliedAt: { not: null } } })).toBe(200);
+    expect(await t.prisma.importRow.count({ where: { batchId: uploaded.id, status: 'CREATE', appliedAt: null } })).toBe(250);
+    const shown = (await request(t.server).get(`/api/v1/contact-imports/${uploaded.id}`).set('Authorization', manager.authorization).expect(200)).body;
+    expect(shown).toMatchObject({ state: 'FAILED', resumable: true });
+    // Confirming again resumes from the first unapplied row; nothing is applied twice.
+    const resumed = (await request(t.server).post(`/api/v1/contact-imports/${uploaded.id}/confirm`).set('Authorization', manager.authorization).set('Idempotency-Key', 'import-bulk-2').expect(200)).body;
+    expect(resumed).toMatchObject({ state: 'COMPLETED', resumable: false, errorMessage: null });
+    expect(resumed.summary).toEqual({ totalRows: total, create: total, update: 0, skip: 0, error: 0, consentGrantedRows: total, withdrawnProtected: 0 });
+    const contacts = await t.prisma.contact.findMany({ where: { organizationId: orgId, phoneE164: { startsWith: '+9230020' } }, select: { id: true } });
+    expect(contacts).toHaveLength(total);
+    expect(await t.prisma.importRow.count({ where: { batchId: uploaded.id, status: 'CREATE', appliedAt: { not: null }, contactId: { not: null } } })).toBe(total);
+    expect(await t.prisma.importRow.count({ where: { batchId: uploaded.id, status: { in: ['SKIP', 'ERROR'] } } })).toBe(0);
+    // One consent event per contact and scope, and every contact in the group once.
+    expect(await t.prisma.consentEvent.count({ where: { contactId: { in: contacts.map((contact) => contact.id) }, scope: 'SURVEY_INVITATIONS' } })).toBe(total);
+    expect(await t.prisma.contactGroup.count({ where: { contactId: { in: contacts.map((contact) => contact.id) } } })).toBe(total);
+    const actions = await t.prisma.auditEvent.findMany({ where: { organizationId: orgId, resourceId: uploaded.id }, select: { action: true } });
+    expect(actions.map((event) => event.action)).toEqual(expect.arrayContaining(['import.confirmed', 'import.failed', 'import.resumed', 'import.completed']));
+    // A completed batch stays completed.
+    const again = (await request(t.server).post(`/api/v1/contact-imports/${uploaded.id}/confirm`).set('Authorization', manager.authorization).expect(200)).body;
+    expect(again.state).toBe('COMPLETED');
+  });
+
+  it('an import left CONFIRMED by a crash resumes once even when confirmed concurrently, and expired rows report a clear error (R11, R56)', async () => {
+    const csv = 'name,phone\nCrash One,+923002100001\nCrash Two,+923002100002\nCrash Three,+923002100003\n';
+    const mapping = { columns: { name: 'name', phone: 'phone' }, defaultCountry: 'PK', duplicateMode: 'SKIP_EXISTING' };
+    const uploaded = (await request(t.server).post('/api/v1/contact-imports').set('Authorization', manager.authorization).attach('file', Buffer.from(csv), 'crash.csv').expect(201)).body;
+    await request(t.server).post(`/api/v1/contact-imports/${uploaded.id}/preview`).set('Authorization', manager.authorization).send(mapping).expect(200);
+    // The API process died right after claiming the batch: CONFIRMED, nothing applied.
+    await t.prisma.importBatch.update({ where: { id: uploaded.id }, data: { state: 'CONFIRMED', confirmedAt: t.clock.now() } });
+    const shown = (await request(t.server).get(`/api/v1/contact-imports/${uploaded.id}`).set('Authorization', manager.authorization).expect(200)).body;
+    expect(shown).toMatchObject({ state: 'CONFIRMED', resumable: true, summary: { create: 3 } });
+    const [first, second] = await Promise.all([
+      request(t.server).post(`/api/v1/contact-imports/${uploaded.id}/confirm`).set('Authorization', manager.authorization).expect(200),
+      request(t.server).post(`/api/v1/contact-imports/${uploaded.id}/confirm`).set('Authorization', manager.authorization).expect(200),
+    ]);
+    expect(first.body.state).toBe('COMPLETED');
+    expect(second.body.state).toBe('COMPLETED');
+    expect(first.body.summary).toMatchObject({ totalRows: 3, create: 3, update: 0, skip: 0, error: 0 });
+    expect(await t.prisma.contact.count({ where: { organizationId: orgId, phoneE164: { startsWith: '+9230021' } } })).toBe(3);
+    expect(await t.prisma.importRow.count({ where: { batchId: uploaded.id, appliedAt: { not: null } } })).toBe(3);
+    expect(await t.prisma.auditEvent.count({ where: { organizationId: orgId, resourceId: uploaded.id, action: 'import.completed' } })).toBe(1);
+
+    // A stopped batch whose staged rows passed the retention window cannot be resumed.
+    const stale = (await request(t.server).post('/api/v1/contact-imports').set('Authorization', manager.authorization).attach('file', Buffer.from('name,phone\nStale Sana,+923002100009\n'), 'stale.csv').expect(201)).body;
+    await request(t.server).post(`/api/v1/contact-imports/${stale.id}/preview`).set('Authorization', manager.authorization).send(mapping).expect(200);
+    await t.prisma.importBatch.update({ where: { id: stale.id }, data: { state: 'CONFIRMED', confirmedAt: t.clock.now(), rawExpiresAt: new Date(t.clock.now().getTime() - 1000) } });
+    expect((await request(t.server).get(`/api/v1/contact-imports/${stale.id}`).set('Authorization', manager.authorization).expect(200)).body.resumable).toBe(false);
+    const expired = await request(t.server).post(`/api/v1/contact-imports/${stale.id}/confirm`).set('Authorization', manager.authorization).expect(409);
+    expect(expired.body.code).toBe('IMPORT_STATE_INVALID');
+    expect(expired.body.message).toContain('expired');
+    // Retention purges its rows; the batch is reported as expired, not resumable, and nothing was imported.
+    await t.app.get(RetentionService).run();
+    expect(await t.prisma.importBatch.findUniqueOrThrow({ where: { id: stale.id } })).toMatchObject({ state: 'EXPIRED', rawBytes: null });
+    expect(await t.prisma.importRow.count({ where: { batchId: stale.id } })).toBe(0);
+    const purged = await request(t.server).post(`/api/v1/contact-imports/${stale.id}/confirm`).set('Authorization', manager.authorization).expect(409);
+    expect(purged.body.message).toContain('expired');
+    expect(await t.prisma.contact.count({ where: { organizationId: orgId, phoneE164: '+923002100009' } })).toBe(0);
   });
 
   it('rejects future-dated consent evidence from attestations and rows (R12, R14)', async () => {

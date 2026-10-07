@@ -16,10 +16,11 @@ import { CLOCK } from '../clock/clock.service';
 import type { TenantContext } from '../common/context';
 import { DomainError, invalid, notFound } from '../common/errors';
 import { APP_CONFIG, type AppConfig } from '../config/env';
+import { getLogger } from '../observability/logger';
 import { asJson } from '../persistence/json';
 import type { ImportBatch, Prisma } from '../persistence/prisma.service';
 import { TenantDbFactory } from '../persistence/tenant-db.factory';
-import type { TenantTx } from '../persistence/tenant-db';
+import type { TenantDb, TenantTx } from '../persistence/tenant-db';
 import { ConsentService } from './consent.service';
 
 export interface UploadedImportFile {
@@ -35,8 +36,14 @@ interface ParsedTable {
 
 const PREVIEW_ROWS = 200;
 const CHUNK = 200;
+const EMPTY_SUMMARY: ImportSummaryDto = { totalRows: 0, create: 0, update: 0, skip: 0, error: 0, consentGrantedRows: 0, withdrawnProtected: 0 };
 
-function toBatchDto(batch: ImportBatch): ImportBatchDto {
+/** A batch whose processing stopped can continue while its staged rows are within the retention window. */
+function isResumable(batch: Pick<ImportBatch, 'state' | 'rawExpiresAt'>, now: Date): boolean {
+  return (batch.state === 'CONFIRMED' || batch.state === 'FAILED') && batch.rawExpiresAt.getTime() > now.getTime();
+}
+
+function toBatchDto(batch: ImportBatch, now: Date): ImportBatchDto {
   return {
     id: batch.id,
     fileName: batch.fileName,
@@ -50,6 +57,7 @@ function toBatchDto(batch: ImportBatch): ImportBatchDto {
     duplicateMode: batch.duplicateMode,
     state: batch.state,
     summary: (batch.summary as ImportSummaryDto | null) ?? null,
+    resumable: isResumable(batch, now),
     hasConsentAttestation: Boolean(batch.consentAttestation),
     rawExpiresAt: batch.rawExpiresAt.toISOString(),
     previewedAt: batch.previewedAt?.toISOString() ?? null,
@@ -62,6 +70,8 @@ function toBatchDto(batch: ImportBatch): ImportBatchDto {
 
 @Injectable()
 export class ImportService {
+  private readonly logger = getLogger('imports');
+
   constructor(
     private readonly dbFactory: TenantDbFactory,
     private readonly audit: AuditService,
@@ -100,7 +110,7 @@ export class ImportService {
       },
     });
     await this.audit.record(ctx, { action: 'import.uploaded', resourceType: 'import_batch', resourceId: batch.id, metadata: { fileType, size: file.buffer.length, rows: table.rows.length } });
-    return { ...toBatchDto(batch), suggestedMapping: suggestMapping(table.headers) };
+    return { ...toBatchDto(batch, now), suggestedMapping: suggestMapping(table.headers) };
   }
 
   /** Step 2: map columns, validate every row and stage the plan. Still nothing imported. */
@@ -223,24 +233,49 @@ export class ImportService {
     return this.previewDto(updated, rowsData);
   }
 
-  /** Step 3: explicit confirmation applies the staged plan transactionally in chunks. */
+  /**
+   * Step 3: explicit confirmation applies the staged plan transactionally in chunks. Confirming a
+   * batch whose processing stopped (a crash left it CONFIRMED, or a failure marked it FAILED)
+   * resumes it: processing is idempotent per row, so rows already applied are never applied twice.
+   */
   async confirm(ctx: TenantContext, batchId: string, idempotencyKey: string | null): Promise<ImportBatchDto> {
     const db = this.dbFactory.for(ctx);
     const batch = await db.importBatch.findUnique({ where: { id: batchId } });
     if (!batch) throw notFound('Import');
-    if (batch.state === 'COMPLETED' || batch.state === 'CONFIRMED') return toBatchDto(batch);
-    if (batch.state !== 'PREVIEWED') throw new DomainError('IMPORT_STATE_INVALID', 'Preview the import before confirming it');
     const now = this.clock.now();
+    if (batch.state === 'COMPLETED') return toBatchDto(batch, now);
+    if (batch.state === 'CONFIRMED' || batch.state === 'FAILED') {
+      if (!isResumable(batch, now)) {
+        throw new DomainError('IMPORT_STATE_INVALID', 'The staged rows of this import have expired and it can no longer be resumed; rows already imported are kept. Upload the file again to import the rest.', { batchId });
+      }
+      if (batch.state === 'FAILED') {
+        const reopened = await db.importBatch.updateMany({ where: { id: batchId, state: 'FAILED' }, data: { state: 'CONFIRMED', errorMessage: null } });
+        if (reopened.count !== 1) return toBatchDto(await db.importBatch.findUniqueOrThrow({ where: { id: batchId } }), now);
+      }
+      await this.audit.record(ctx, { action: 'import.resumed', resourceType: 'import_batch', resourceId: batchId, metadata: { from: batch.state } });
+      return this.process(ctx, batchId);
+    }
+    if (batch.state === 'EXPIRED') {
+      throw new DomainError('IMPORT_STATE_INVALID', batch.confirmedAt ? 'The staged rows of this import expired before it finished; rows already imported are kept. Upload the file again to import the rest.' : 'The staged file has expired; upload it again', { batchId });
+    }
+    if (batch.state !== 'PREVIEWED') throw new DomainError('IMPORT_STATE_INVALID', 'Preview the import before confirming it');
+    if (batch.rawExpiresAt.getTime() <= now.getTime()) throw new DomainError('IMPORT_STATE_INVALID', 'The staged file has expired; upload it again');
     const claimed = await db.importBatch.updateMany({ where: { id: batchId, state: 'PREVIEWED' }, data: { state: 'CONFIRMED', confirmedAt: now } });
     if (claimed.count !== 1) {
       const current = await db.importBatch.findUniqueOrThrow({ where: { id: batchId } });
-      return toBatchDto(current);
+      return toBatchDto(current, now);
     }
     await this.audit.record(ctx, { action: 'import.confirmed', resourceType: 'import_batch', resourceId: batchId, metadata: { idempotencyKey: idempotencyKey ? createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 16) : null } });
     return this.process(ctx, batchId);
   }
 
-  /** Apply a confirmed batch. Safe to re-run: rows already linked to contacts are skipped. */
+  /**
+   * Apply a confirmed batch. Idempotent per row: a row is applied inside a chunk transaction that
+   * also stamps `appliedAt`, so a re-run (after a crash or a failure) only applies the rows that
+   * never committed. Concurrent runs of the same batch serialize on the batch row and re-read each
+   * chunk under that lock, so no row is applied twice. A failure that aborts a chunk records the
+   * batch as FAILED with the partial summary and is reported to the caller as an error.
+   */
   async process(ctx: TenantContext, batchId: string): Promise<ImportBatchDto> {
     const db = this.dbFactory.for(ctx);
     const batch = await db.importBatch.findUnique({ where: { id: batchId } });
@@ -248,79 +283,129 @@ export class ImportService {
     const attestation = batch.consentAttestation as ImportMapping['consentAttestation'] | null;
     const processedAt = this.clock.now();
     if (attestation && isFutureEvidence(attestation.collectedAt, processedAt)) throw new DomainError('IMPORT_VALIDATION_FAILED', 'The consent attestation date is in the future; preview the import again');
-    const rows = await db.importRow.findMany({ where: { batchId, status: { in: ['CREATE', 'UPDATE'] } }, orderBy: { rowNumber: 'asc' } });
+    const pending = await db.importRow.findMany({ where: { batchId, status: { in: ['CREATE', 'UPDATE'] }, appliedAt: null }, orderBy: { rowNumber: 'asc' }, select: { id: true } });
     const groupCache = new Map<string, string>();
     const tagCache = new Map<string, string>();
     const failures: ImportRowErrorDto[] = [];
     let created = 0;
     let updated = 0;
     try {
-      for (let i = 0; i < rows.length; i += CHUNK) {
-        const chunk = rows.slice(i, i + CHUNK);
+      for (let i = 0; i < pending.length; i += CHUNK) {
+        const chunkIds = pending.slice(i, i + CHUNK).map((row) => row.id);
         await db.$transaction(async (tx) => {
+          // Serialize concurrent runs of the same batch and re-read the chunk under the lock: a row
+          // another run applied meanwhile is no longer pending.
+          await tx.$queryRaw`SELECT id FROM import_batches WHERE id = ${batchId}::uuid AND organization_id = ${ctx.organizationId}::uuid FOR UPDATE`;
+          const chunk = await tx.importRow.findMany({ where: { id: { in: chunkIds }, appliedAt: null }, orderBy: { rowNumber: 'asc' } });
           for (const row of chunk) {
             const normalized = row.normalized as (NormalizedImportRow & { consentEligible: boolean }) | null;
-            if (!normalized) continue;
+            if (!normalized) {
+              await this.markRow(tx, row.id, processedAt, 'ERROR', [{ rowNumber: row.rowNumber, field: null, message: 'The staged row has no plan; preview the import again' }]);
+              continue;
+            }
             if (normalized.consentEligible && normalized.consentEvidenceAt && isFutureEvidence(normalized.consentEvidenceAt, processedAt)) {
               // Revalidated at processing time: the staged plan is never trusted over the clock.
               failures.push({ rowNumber: row.rowNumber, field: 'consentEvidenceAt', message: FUTURE_EVIDENCE_MESSAGE });
-              await tx.importRow.update({ where: { id: row.id }, data: { status: 'ERROR', errors: asJson([{ rowNumber: row.rowNumber, field: 'consentEvidenceAt', message: FUTURE_EVIDENCE_MESSAGE }]) } });
+              await this.markRow(tx, row.id, processedAt, 'ERROR', [{ rowNumber: row.rowNumber, field: 'consentEvidenceAt', message: FUTURE_EVIDENCE_MESSAGE }]);
               continue;
             }
             try {
               if (row.status === 'CREATE') {
                 const existing = await tx.contact.findUnique({ where: { organizationId_phoneE164: { organizationId: ctx.organizationId, phoneE164: normalized.phoneE164 } } });
                 if (existing) {
-                  await tx.importRow.update({ where: { id: row.id }, data: { status: 'SKIP', contactId: existing.id } });
+                  await tx.importRow.update({ where: { id: row.id }, data: { status: 'SKIP', contactId: existing.id, appliedAt: processedAt } });
                   continue;
                 }
                 const contact = await tx.contact.create({ data: this.createData(ctx, batch, normalized) });
                 await this.linkGroupsTags(tx, ctx, contact.id, normalized, groupCache, tagCache);
                 if (normalized.consentEligible && attestation) await this.grantFromImport(tx, contact.id, batch, attestation, normalized, ctx);
-                await tx.importRow.update({ where: { id: row.id }, data: { contactId: contact.id } });
+                await tx.importRow.update({ where: { id: row.id }, data: { contactId: contact.id, appliedAt: processedAt } });
                 created += 1;
-              } else if (row.status === 'UPDATE' && row.contactId) {
-                const existing = await tx.contact.findUnique({ where: { id: row.contactId } });
-                if (!existing) continue;
+              } else if (row.status === 'UPDATE') {
+                const existing = row.contactId ? await tx.contact.findUnique({ where: { id: row.contactId } }) : null;
+                if (!existing) {
+                  await this.markRow(tx, row.id, processedAt, 'ERROR', [{ rowNumber: row.rowNumber, field: 'phone', message: 'The matched contact no longer exists; preview the import again' }]);
+                  continue;
+                }
                 await tx.contact.update({ where: { id: existing.id }, data: this.updateData(existing, normalized, batch) });
                 await this.linkGroupsTags(tx, ctx, existing.id, normalized, groupCache, tagCache);
                 const withdrawn = existing.consentInvitations === 'WITHDRAWN' || existing.consentResults === 'WITHDRAWN';
                 if (normalized.consentEligible && attestation && !withdrawn) await this.grantFromImport(tx, existing.id, batch, attestation, normalized, ctx);
+                await tx.importRow.update({ where: { id: row.id }, data: { appliedAt: processedAt } });
                 updated += 1;
               }
             } catch (error) {
-              failures.push({ rowNumber: row.rowNumber, field: null, message: error instanceof Error ? error.message.slice(0, 200) : 'Unexpected error' });
-              await tx.importRow.update({ where: { id: row.id }, data: { status: 'ERROR', errors: asJson([{ rowNumber: row.rowNumber, field: null, message: 'Failed during import' }]) } });
+              // Only a domain rule turns into a row error. Anything else (a database error leaves
+              // the transaction unusable) aborts the chunk and fails the batch, which can be resumed.
+              if (!(error instanceof DomainError)) throw error;
+              failures.push({ rowNumber: row.rowNumber, field: null, message: error.message.slice(0, 200) });
+              await this.markRow(tx, row.id, processedAt, 'ERROR', [{ rowNumber: row.rowNumber, field: null, message: error.message.slice(0, 200) }]);
             }
           }
         });
       }
-      const previous = (batch.summary as ImportSummaryDto | null) ?? { totalRows: 0, create: 0, update: 0, skip: 0, error: 0, consentGrantedRows: 0, withdrawnProtected: 0 };
-      const finalSummary: ImportSummaryDto = { ...previous, create: created, update: updated, error: previous.error + failures.length, skip: previous.skip + (previous.create - created) + (previous.update - updated) - failures.length };
-      const completed = await db.importBatch.update({
-        where: { id: batchId },
-        data: { state: 'COMPLETED', completedAt: this.clock.now(), summary: asJson(finalSummary), rawBytes: null, stagingPurgedAt: this.clock.now() },
+      const summary = await this.summarize(db, batch);
+      const completedAt = this.clock.now();
+      const completed = await db.importBatch.updateMany({
+        where: { id: batchId, state: 'CONFIRMED' },
+        data: { state: 'COMPLETED', completedAt, summary: asJson(summary), rawBytes: null, stagingPurgedAt: completedAt, errorMessage: null },
       });
-      await this.audit.record(ctx, { action: 'import.completed', resourceType: 'import_batch', resourceId: batchId, metadata: { created, updated, failures: failures.length } });
-      return toBatchDto(completed);
+      if (completed.count === 1) await this.audit.record(ctx, { action: 'import.completed', resourceType: 'import_batch', resourceId: batchId, metadata: { created, updated, failures: failures.length } });
+      return toBatchDto(await db.importBatch.findUniqueOrThrow({ where: { id: batchId } }), completedAt);
     } catch (error) {
-      const failed = await db.importBatch.update({
-        where: { id: batchId },
-        data: { state: 'FAILED', errorMessage: error instanceof Error ? error.message.slice(0, 500) : 'Import failed', rawBytes: null, stagingPurgedAt: this.clock.now() },
-      });
-      return toBatchDto(failed);
+      const reason = error instanceof Error ? error.message.slice(0, 500) : 'Import failed';
+      this.logger.error({ batchId, err: reason, created, updated }, 'Import processing stopped');
+      let summary: ImportSummaryDto;
+      try {
+        // Record the failure with what was applied so far.
+        summary = await this.summarize(db, batch);
+        await db.importBatch.updateMany({
+          where: { id: batchId, state: 'CONFIRMED' },
+          data: { state: 'FAILED', errorMessage: reason, summary: asJson(summary), rawBytes: null, stagingPurgedAt: this.clock.now() },
+        });
+        await this.audit.record(ctx, { action: 'import.failed', resourceType: 'import_batch', resourceId: batchId, metadata: { created, updated, failures: failures.length } });
+      } catch (recording) {
+        // The database is unreachable: the batch stays CONFIRMED and the next confirmation resumes it.
+        this.logger.error({ batchId, err: recording instanceof Error ? recording.message : String(recording) }, 'Import failure could not be recorded');
+        throw error;
+      }
+      throw new DomainError(
+        'IMPORT_PROCESSING_FAILED',
+        'The import stopped before every row was applied. Rows already imported are kept; confirm the import again to continue with the remaining rows, or download the error report.',
+        { batchId, state: 'FAILED', errorMessage: reason, summary },
+      );
     }
+  }
+
+  private async markRow(tx: TenantTx, rowId: string, appliedAt: Date, status: 'ERROR', errors: ImportRowErrorDto[]): Promise<void> {
+    await tx.importRow.update({ where: { id: rowId }, data: { status, errors: asJson(errors), appliedAt } });
+  }
+
+  /**
+   * Outcome counts from the rows themselves: planned rows that were not applied yet are in no
+   * bucket, so `create + update + skip + error` is below `totalRows` while a batch is unfinished.
+   */
+  private async summarize(db: TenantDb, batch: ImportBatch): Promise<ImportSummaryDto> {
+    const previous = (batch.summary as ImportSummaryDto | null) ?? EMPTY_SUMMARY;
+    const [create, update, skip, error] = await Promise.all([
+      db.importRow.count({ where: { batchId: batch.id, status: 'CREATE', appliedAt: { not: null } } }),
+      db.importRow.count({ where: { batchId: batch.id, status: 'UPDATE', appliedAt: { not: null } } }),
+      db.importRow.count({ where: { batchId: batch.id, status: 'SKIP' } }),
+      db.importRow.count({ where: { batchId: batch.id, status: 'ERROR' } }),
+    ]);
+    return { ...previous, create, update, skip, error };
   }
 
   async get(ctx: TenantContext, batchId: string): Promise<ImportBatchDto> {
     const batch = await this.dbFactory.for(ctx).importBatch.findUnique({ where: { id: batchId } });
     if (!batch) throw notFound('Import');
-    return toBatchDto(batch);
+    return toBatchDto(batch, this.clock.now());
   }
 
   async list(ctx: TenantContext): Promise<ImportBatchDto[]> {
     const batches = await this.dbFactory.for(ctx).importBatch.findMany({ orderBy: { createdAt: 'desc' }, take: 50 });
-    return batches.map(toBatchDto);
+    const now = this.clock.now();
+    return batches.map((batch) => toBatchDto(batch, now));
   }
 
   async previewRows(ctx: TenantContext, batchId: string): Promise<ImportPreviewDto> {
@@ -358,7 +443,7 @@ export class ImportService {
         errors: ((row.errors as ImportRowErrorDto[] | undefined) ?? []).map((error) => ({ ...error })),
       };
     });
-    return { batch: toBatchDto(batch), rows: preview, rowsShown: preview.length };
+    return { batch: toBatchDto(batch, this.clock.now()), rows: preview, rowsShown: preview.length };
   }
 
   private sheetNames(buffer: Buffer): string[] {

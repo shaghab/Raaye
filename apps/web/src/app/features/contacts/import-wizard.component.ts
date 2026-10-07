@@ -178,8 +178,22 @@ function guessField(header: string): ImportField | '' {
             </mat-step>
             <mat-step label="Done">
               @if (result(); as r) {
-                <div class="banner ok" data-testid="import-done">Import {{ r.state | label }}: {{ r.summary?.create }} created, {{ r.summary?.update }} updated, {{ r.summary?.skip }} skipped, {{ r.summary?.error }} errors.</div>
+                @if (r.state === 'COMPLETED') {
+                  <div class="banner ok" data-testid="import-done">Import {{ r.state | label }}: {{ r.summary?.create }} created, {{ r.summary?.update }} updated, {{ r.summary?.skip }} skipped, {{ r.summary?.error }} errors.</div>
+                } @else {
+                  <div class="banner bad" data-testid="import-done">
+                    <strong>Import {{ r.state | label }}: it stopped before every row was applied.</strong>
+                    So far {{ r.summary?.create ?? 0 }} created, {{ r.summary?.update ?? 0 }} updated, {{ r.summary?.skip ?? 0 }} skipped, {{ r.summary?.error ?? 0 }} errors; {{ remaining(r) }} rows not applied yet.
+                    @if (r.errorMessage) { <div class="small">Reason: {{ r.errorMessage }}</div> }
+                    @if (r.resumable) {
+                      <div class="small">Rows already imported are kept. Resume to continue with the remaining rows; nothing is imported twice. The staged rows expire {{ r.rawExpiresAt | dt }}.</div>
+                    } @else {
+                      <div class="small">The staged rows have expired. Rows already imported are kept; upload the file again to import the rest.</div>
+                    }
+                  </div>
+                }
                 <div class="row">
+                  @if (r.resumable) { <button mat-flat-button type="button" [disabled]="confirming()" (click)="resume(r.id)" data-testid="import-resume">Resume import</button> }
                   <a mat-flat-button routerLink="/contacts">Go to contacts</a>
                   @if ((r.summary?.error ?? 0) > 0) { <button mat-stroked-button type="button" (click)="downloadErrors(r.id)">Error report</button> }
                 </div>
@@ -198,7 +212,10 @@ function guessField(header: string): ImportField | '' {
                 <ng-container matColumnDef="state"><th mat-header-cell *matHeaderCellDef>State</th><td mat-cell *matCellDef="let b"><rye-chip [code]="b.state" /></td></ng-container>
                 <ng-container matColumnDef="summary"><th mat-header-cell *matHeaderCellDef>Summary</th><td mat-cell *matCellDef="let b" class="small">@if (b.summary) { {{ b.summary.create }} created · {{ b.summary.update }} updated · {{ b.summary.skip }} skipped · {{ b.summary.error }} errors } @else { — }</td></ng-container>
                 <ng-container matColumnDef="when"><th mat-header-cell *matHeaderCellDef>Uploaded</th><td mat-cell *matCellDef="let b">{{ b.createdAt | dt }}</td></ng-container>
-                <ng-container matColumnDef="actions"><th mat-header-cell *matHeaderCellDef></th><td mat-cell *matCellDef="let b">@if ((b.summary?.error ?? 0) > 0 && b.state !== 'EXPIRED') { <button mat-button type="button" (click)="downloadErrors(b.id)">Errors</button> }</td></ng-container>
+                <ng-container matColumnDef="actions"><th mat-header-cell *matHeaderCellDef></th><td mat-cell *matCellDef="let b">
+                  @if (b.resumable) { <button mat-button type="button" [disabled]="confirming()" (click)="resume(b.id)">Resume</button> }
+                  @if ((b.summary?.error ?? 0) > 0 && b.state !== 'EXPIRED') { <button mat-button type="button" (click)="downloadErrors(b.id)">Errors</button> }
+                </td></ng-container>
                 <tr mat-header-row *matHeaderRowDef="historyColumns"></tr>
                 <tr mat-row *matRowDef="let row; columns: historyColumns"></tr>
               </table>
@@ -321,11 +338,46 @@ export class ImportWizardComponent {
     try {
       this.result.set(await this.api.post<ImportBatchDto>(`/contact-imports/${batch.id}/confirm`, {}, { idempotencyKey: idempotencyKey(`import-${batch.id}`) }));
       stepper.next();
-      await this.loadHistory();
     } catch (error) {
-      this.notify.error(error);
+      // Processing stopped part-way: show the failed batch with what was applied and the resume path.
+      if (await this.showFailure(error, batch.id)) stepper.next();
     } finally {
       this.confirming.set(false);
+      await this.loadHistory();
+    }
+  }
+
+  /** Continue a batch whose processing stopped; rows already applied are never applied twice. */
+  async resume(batchId: string): Promise<void> {
+    this.confirming.set(true);
+    try {
+      const resumed = await this.api.post<ImportBatchDto>(`/contact-imports/${batchId}/confirm`, {}, { idempotencyKey: idempotencyKey(`import-resume-${batchId}`) });
+      this.result.set(resumed);
+      this.notify.info(`Import ${resumed.state.toLowerCase()}: ${resumed.summary?.create ?? 0} created, ${resumed.summary?.update ?? 0} updated, ${resumed.summary?.skip ?? 0} skipped, ${resumed.summary?.error ?? 0} errors.`);
+    } catch (error) {
+      await this.showFailure(error, batchId);
+    } finally {
+      this.confirming.set(false);
+      await this.loadHistory();
+    }
+  }
+
+  /** Rows that were planned as create/update but not applied yet (unfinished batches only). */
+  remaining(batch: ImportBatchDto): number {
+    const summary = batch.summary;
+    if (!summary) return 0;
+    return Math.max(0, summary.totalRows - summary.create - summary.update - summary.skip - summary.error);
+  }
+
+  private async showFailure(error: unknown, batchId: string): Promise<boolean> {
+    const apiError = this.notify.error(error);
+    if (apiError.code !== 'IMPORT_PROCESSING_FAILED') return false;
+    try {
+      this.result.set(await this.api.get<ImportBatchDto>(`/contact-imports/${batchId}`));
+      return true;
+    } catch (reload) {
+      this.notify.error(reload);
+      return false;
     }
   }
 

@@ -276,6 +276,8 @@ export interface ImportBatchDto {
   duplicateMode: DuplicateMode;
   state: ImportState;
   summary: ImportSummaryDto | null;
+  /** Processing stopped (crash or failure) and the staged rows are still within their retention window: confirming again continues it. */
+  resumable: boolean;
   hasConsentAttestation: boolean;
   rawExpiresAt: string;
   previewedAt: string | null;
