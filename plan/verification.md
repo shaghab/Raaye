@@ -124,8 +124,13 @@ Codex completed its review of 2c62a04 with no findings ("Didn't find any major i
 
 ## Final verification on the pull-request head
 
-Lint, strict typecheck, unit tests (64), integration tests (11 suites / 71 tests) and `pnpm whatsapp:validate` last ran after the final code change (`56b2580`, head `2c62a04`); every later commit only touches the `plan/` records. On `745b97f`:
+The last product-code change is `56b2580` (head `2c62a04` at review round 13). The later commits `745b97f` and `dd2a4a9` change only `plan/` records and `scripts/docker-smoke.ts`. What ran, and from which tree:
 
-- `pnpm build`: passed (api, worker, web production bundles).
-- `pnpm test:e2e`: passed, 8 Playwright journeys (1 m 18 s).
-- Docker smoke (`scripts/docker-smoke.ts` with the Compose stack rebuilt from this head): passed at 12:21 UTC with the stack rebuilt from this head: bootstrap migrated and seeded, dashboard and API reachable through nginx on 127.0.0.1:8080, emulator sign-in, seeded surveys present, a newly created contact survived `docker compose restart api worker`, the seed re-run added nothing, and `docker compose down` completed. A first attempt failed only because the script reused a fixed phone number against the database volume kept from an earlier `--keep` run; `scripts/docker-smoke.ts` now derives the number from the run timestamp (committed together with this record).
+- From `745b97f`: `pnpm build` passed (api, worker, web production bundles); `pnpm test:e2e` passed, 8 Playwright journeys (1 m 18 s).
+- Docker smoke from `745b97f`: failed at the contact-creation step with `CONTACT_DUPLICATE`, because `scripts/docker-smoke.ts` reused a fixed phone number against the Compose volume kept from an earlier `--keep` run; the stack had already built, migrated, seeded and become healthy. The script now derives the number from the run timestamp.
+- Docker smoke from the modified working tree that became `dd2a4a9` (`745b97f` plus that script change): passed at 12:21 UTC with the images rebuilt from that tree: bootstrap migrated and seeded, dashboard and API reachable through nginx on 127.0.0.1:8080, emulator sign-in, seeded surveys present, a newly created contact survived `docker compose restart api worker`, the seed re-run added nothing, `docker compose down` completed.
+- From the tree of `dd2a4a9` (only `plan/review-state.json` differed, uncommitted), after review round 14 questioned this record: `pnpm verify` passed (lint and strict typecheck for 7 projects and the three production builds were replayed from the Nx cache because their inputs had not changed; unit tests executed, 64 passed in 6 projects (12 s); integration tests executed, 11 suites / 71 tests (63 s); WhatsApp assets 8 checks) and `pnpm test:e2e` passed (8 journeys, 55 s).
+
+## Review round 14 (Codex, commit dd2a4a9)
+
+One P2 finding, on this file: the first version of the section above said that every commit after `2c62a04` touched only `plan/` and attributed the successful Docker smoke to `745b97f`. Because this file is the verification evidence, the section was corrected in the record commit instead of being deferred to an issue, and the full `pnpm verify` suite and the Playwright journeys were re-run from the `dd2a4a9` tree so that the record no longer rests on partial re-runs. No product code changed.

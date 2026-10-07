@@ -122,6 +122,17 @@
       "reviewedAt": "2026-10-07T12:07:55Z",
       "findings": 0,
       "outcome": "no findings"
+    },
+    {
+      "headSha": "dd2a4a9",
+      "requestedAt": "2026-10-07T12:29:11.141410+00:00",
+      "status": "completed",
+      "round": 14,
+      "requestCommentId": 6037801449,
+      "reviewId": 5442216754,
+      "reviewedAt": "2026-10-07T12:25:01Z",
+      "findings": 1,
+      "outcome": "1 P2 finding on the verification record"
     }
   ],
   "processedFindings": [
@@ -565,6 +576,18 @@
       "action": "tracked",
       "issue": "https://github.com/shaghab/Raaye/issues/19",
       "resolved": true
+    },
+    {
+      "reviewId": 5442216754,
+      "commentId": 4206827128,
+      "threadId": "PRRT_kwDOU--Sjc6p5n_C",
+      "priority": "P2",
+      "file": "plan/verification.md",
+      "title": "Correct the final verification commit attribution",
+      "action": "corrected-in-record",
+      "commit": null,
+      "resolved": false,
+      "note": "Corrected in the round-14 record commit (verification record only); the commit sha is recorded in the next state update."
     }
   ],
   "issues": [
@@ -666,5 +689,5 @@
     }
   ],
   "blockers": [],
-  "updatedAt": "2026-10-07T12:12:29.280890+00:00"
+  "updatedAt": "2026-10-07T12:35:05.356033+00:00"
 }
