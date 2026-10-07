@@ -81,8 +81,10 @@ export class LaunchService {
     const connectionId = readiness.connection.id;
     try {
       await db.$transaction(async (tx) => {
-        const guard = await tx.survey.updateMany({ where: { id: survey.id, state: 'DRAFT' }, data: { state: input.mode === 'NOW' ? 'ACTIVE' : 'SCHEDULED' } });
-        if (guard.count !== 1) throw new DomainError('SURVEY_STATE_INVALID', 'The survey was launched concurrently');
+        // Serialized with archive on the survey row: an archive that commits first fails this guard.
+        await tx.$queryRaw`SELECT id FROM surveys WHERE id = ${survey.id}::uuid AND organization_id = ${ctx.organizationId}::uuid FOR UPDATE`;
+        const guard = await tx.survey.updateMany({ where: { id: survey.id, state: 'DRAFT', archivedAt: null }, data: { state: input.mode === 'NOW' ? 'ACTIVE' : 'SCHEDULED' } });
+        if (guard.count !== 1) throw new DomainError('SURVEY_STATE_INVALID', 'The survey was launched or archived concurrently');
         await tx.surveyRevision.update({ where: { id: revision.id }, data: { frozenAt: now, scheduledOpensAt: opensAt, rendererPlan: asJson(revision.questions.map((question) => ({ questionId: question.id, renderer: question.renderer }))) } });
         const run = await tx.surveyRun.create({
           data: {

@@ -224,6 +224,29 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
   });
 
+  it('archive and launch of the same draft serialize: an archived survey never has live outreach (R55)', async () => {
+    for (let round = 0; round < 4; round += 1) {
+      const id = await createSurvey(`Race survey ${round}`, { audience: { mode: 'SELECTED', contactIds: [contacts['Ehsan']] } });
+      const [archived, launched] = await Promise.all([
+        request(t.server).post(`/api/v1/surveys/${id}/archive`).set('Authorization', manager.authorization),
+        request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).send({ mode: 'NOW' }),
+      ]);
+      expect([200, 409]).toContain(archived.status);
+      expect([200, 409]).toContain(launched.status);
+      const detail = (await request(t.server).get(`/api/v1/surveys/${id}`).set('Authorization', admin.authorization).expect(200)).body;
+      await drainJobs(t);
+      if (detail.archivedAt) {
+        expect(detail.state).not.toBe('ACTIVE');
+        expect(detail.liveRun).toBeNull();
+        expect(await t.prisma.message.count({ where: { contactId: contacts['Ehsan'], run: { surveyId: id } } })).toBe(0);
+      } else {
+        expect(detail.state).toBe('ACTIVE');
+        expect(detail.liveRun.state).toBe('ACTIVE');
+        await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
+      }
+    }
+  });
+
   it('schedules with a 48-hour default, survives restart via durable jobs, unschedules, activates and closes on time (R25, R26, R27, R29)', async () => {
     const id = await createSurvey('Scheduled survey');
     const opensAt = '2026-10-11T04:00:00.000Z'; // 09:00 Asia/Karachi

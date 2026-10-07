@@ -194,12 +194,16 @@ export class SurveysService {
   async archive(ctx: TenantContext, surveyId: string, cancelScheduled: (tx: TenantTx, runId: string) => Promise<void>): Promise<SurveyDetailDto> {
     if (ctx.role === 'VIEWER') throw forbidden();
     const db = this.dbFactory.for(ctx);
-    const survey = await this.load(db, surveyId);
-    if (survey.state === 'ACTIVE') throw new DomainError('SURVEY_STATE_INVALID', 'Close the survey before archiving it');
     await db.$transaction(async (tx) => {
+      // Survey row lock: a concurrent launch either commits first (the survey is then active and
+      // archiving is refused) or waits for this archive and fails its draft guard.
+      await tx.$queryRaw`SELECT id FROM surveys WHERE id = ${surveyId}::uuid AND organization_id = ${ctx.organizationId}::uuid FOR UPDATE`;
+      const survey = await this.load(tx, surveyId);
+      if (survey.state === 'ACTIVE') throw new DomainError('SURVEY_STATE_INVALID', 'Close the survey before archiving it');
       const scheduled = survey.runs.find((run) => run.kind === 'LIVE' && run.state === 'SCHEDULED');
       if (scheduled) await cancelScheduled(tx, scheduled.id);
-      await tx.survey.update({ where: { id: survey.id }, data: { archivedAt: survey.archivedAt ?? this.clock.now(), state: survey.state === 'SCHEDULED' ? 'DRAFT' : survey.state } });
+      const guard = await tx.survey.updateMany({ where: { id: survey.id, state: survey.state }, data: { archivedAt: survey.archivedAt ?? this.clock.now(), state: survey.state === 'SCHEDULED' ? 'DRAFT' : survey.state } });
+      if (guard.count !== 1) throw new DomainError('SURVEY_STATE_INVALID', 'The survey changed concurrently; reload and try again');
       await this.audit.record(ctx, { action: 'survey.archived', resourceType: 'survey', resourceId: survey.id }, tx);
     });
     return this.get(ctx, surveyId);
@@ -269,7 +273,7 @@ export class SurveysService {
     return [...errors, ...timing.map((error) => ({ questionIndex: null, optionIndex: null, code: error.code, message: error.message }))];
   }
 
-  async load(db: ReturnType<TenantDbFactory['for']>, surveyId: string): Promise<SurveyWithRevisions> {
+  async load(db: TenantTx, surveyId: string): Promise<SurveyWithRevisions> {
     const survey = await db.survey.findUnique({ where: { id: surveyId }, include: surveyInclude() });
     if (!survey || survey.revisions.length === 0) throw notFound('Survey');
     const current = await db.surveyRevision.findFirst({ where: { surveyId, revisionNumber: survey.currentRevisionNumber }, include: revisionInclude });
