@@ -134,8 +134,10 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     expect(serialized).not.toContain('ratingValue');
     expect(dispatch.recipients.items.find((item: { contactName: string }) => item.contactName === 'P1')).toMatchObject({ participationState: 'COMPLETED', answeredCount: 3, deliveryState: 'DELIVERED' });
     const empty = (await request(t.server).post('/api/v1/surveys').set('Authorization', manager.authorization).send({ internalTitle: 'Unlaunched', questions: QUESTIONS, audience: { mode: 'EVERYONE' } }).expect(201)).body;
-    const none = (await request(t.server).get(`/api/v1/surveys/${empty.id}/results`).set('Authorization', viewer.authorization).expect(200)).body;
+    const none = (await request(t.server).get(`/api/v1/surveys/${empty.id}/results`).set('Authorization', manager.authorization).expect(200)).body;
     expect(none).toMatchObject({ runId: null, started: 0, responded: 0, questions: [] });
+    // A Viewer cannot see an unlaunched (draft) survey at all, results included.
+    await request(t.server).get(`/api/v1/surveys/${empty.id}/results`).set('Authorization', viewer.authorization).expect(404);
   });
 
   it('breakdowns use the frozen analysis snapshot and suppress small cohorts for non-admins (R48)', async () => {

@@ -61,7 +61,7 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
 
   it('creates a survey with all five question types and previews every message (R20)', async () => {
     const id = await createSurvey('Transport survey');
-    const detail = (await request(t.server).get(`/api/v1/surveys/${id}`).set('Authorization', viewer.authorization).expect(200)).body;
+    const detail = (await request(t.server).get(`/api/v1/surveys/${id}`).set('Authorization', manager.authorization).expect(200)).body;
     expect(detail.state).toBe('DRAFT');
     expect(detail.revision.questions.map((question: { authoringType: string; renderer: string }) => [question.authoringType, question.renderer])).toEqual([
       ['YES_NO', 'BUTTONS'],
@@ -74,12 +74,37 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     expect(detail.revision.editWindowSeconds).toBe(120);
     expect(detail.revision.durationSeconds).toBe(172800);
     expect(detail.contentErrors).toEqual([]);
-    const preview = (await request(t.server).post(`/api/v1/surveys/${id}/preview`).set('Authorization', viewer.authorization).expect(200)).body;
+    const preview = (await request(t.server).post(`/api/v1/surveys/${id}/preview`).set('Authorization', manager.authorization).expect(200)).body;
     expect(preview.map((message: { kind: string }) => message.kind)).toEqual(['INVITATION', 'INTRODUCTION', 'PROFILE_OFFER', 'QUESTION', 'QUESTION', 'QUESTION', 'QUESTION', 'QUESTION', 'COMPLETION']);
     expect(preview[3].controls.map((control: { label: string }) => control.label)).toEqual(['Yes', 'No']);
     expect(preview[6].flow.purpose).toBe('MULTI_CHOICE');
     expect(preview[7].controls).toHaveLength(5);
     await request(t.server).post('/api/v1/surveys').set('Authorization', viewer.authorization).send({ internalTitle: 'Nope' }).expect(403);
+  });
+
+  it('Viewers never see draft surveys, in the list or by id (R06)', async () => {
+    const draftId = await createSurvey('Viewer-hidden draft');
+    const archivedDraftId = await createSurvey('Viewer-hidden archived draft');
+    await request(t.server).post(`/api/v1/surveys/${archivedDraftId}/archive`).set('Authorization', manager.authorization).expect(200);
+    const ids = (page: { items: { id: string }[] }) => page.items.map((item) => item.id);
+    const managerList = (await request(t.server).get('/api/v1/surveys?limit=100').set('Authorization', manager.authorization).expect(200)).body;
+    expect(ids(managerList)).toContain(draftId);
+    const viewerList = (await request(t.server).get('/api/v1/surveys?limit=100').set('Authorization', viewer.authorization).expect(200)).body;
+    expect(ids(viewerList)).not.toContain(draftId);
+    expect(viewerList.items.some((item: { state: string }) => item.state === 'DRAFT')).toBe(false);
+    expect(viewerList.total).toBe(managerList.items.filter((item: { state: string }) => item.state !== 'DRAFT').length);
+    expect((await request(t.server).get('/api/v1/surveys?state=DRAFT&limit=100').set('Authorization', viewer.authorization).expect(200)).body).toMatchObject({ total: 0, items: [] });
+    expect(ids((await request(t.server).get('/api/v1/surveys?archived=true&limit=100').set('Authorization', viewer.authorization).expect(200)).body)).not.toContain(archivedDraftId);
+    expect(ids((await request(t.server).get('/api/v1/surveys?archived=true&limit=100').set('Authorization', manager.authorization).expect(200)).body)).toContain(archivedDraftId);
+    const hidden = await request(t.server).get(`/api/v1/surveys/${draftId}`).set('Authorization', viewer.authorization).expect(404);
+    expect(hidden.body.code).toBe('TENANT_RESOURCE_NOT_FOUND');
+    await request(t.server).post(`/api/v1/surveys/${draftId}/preview`).set('Authorization', viewer.authorization).expect(404);
+    await request(t.server).get(`/api/v1/surveys/${draftId}/results`).set('Authorization', viewer.authorization).expect(404);
+    await request(t.server).get(`/api/v1/surveys/${draftId}/breakdowns?dimension=city`).set('Authorization', viewer.authorization).expect(404);
+    expect((await request(t.server).get(`/api/v1/surveys/${draftId}/results`).set('Authorization', manager.authorization).expect(200)).body.runId).toBeNull();
+    await request(t.server).get(`/api/v1/surveys/${draftId}`).set('Authorization', manager.authorization).expect(200);
+    await request(t.server).get(`/api/v1/surveys/${draftId}`).set('Authorization', admin.authorization).expect(200);
+    await request(t.server).post(`/api/v1/surveys/${draftId}/preview`).set('Authorization', admin.authorization).expect(200);
   });
 
   it('enforces authoring limits and Admin-only timing (R20, matrix)', async () => {
@@ -604,7 +629,7 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     expect(launch.body.code).toBe('TEMPLATE_NOT_READY');
     const testRun = await request(t.server).post(`/api/v1/surveys/${id}/test-runs`).set('Authorization', manager.authorization).send({ contactIds: [contacts.Ayesha] }).expect(422);
     expect(testRun.body.code).toBe('TEMPLATE_NOT_READY');
-    expect((await request(t.server).get(`/api/v1/surveys/${id}`).set('Authorization', viewer.authorization).expect(200)).body.state).toBe('DRAFT');
+    expect((await request(t.server).get(`/api/v1/surveys/${id}`).set('Authorization', manager.authorization).expect(200)).body.state).toBe('DRAFT');
     // Messages queued while the sender was enabled are rechecked when they are about to leave the worker.
     expect((await setConnectionEnabled(true)).ok).toBe(true);
     const launched = (await request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).send({ mode: 'NOW' }).expect(200)).body;

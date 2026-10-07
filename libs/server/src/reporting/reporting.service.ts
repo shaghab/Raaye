@@ -22,6 +22,7 @@ import { Prisma } from '../persistence/prisma.service';
 import { TenantDbFactory } from '../persistence/tenant-db.factory';
 import type { TenantDb } from '../persistence/tenant-db';
 import { revisionInclude, toRunSummary, type RevisionWithQuestions } from '../surveys/survey-mapper';
+import { assertSurveyVisible } from '../surveys/visibility';
 
 export interface LiveRunContext {
   survey: { id: string; internalTitle: string; state: string };
@@ -45,6 +46,7 @@ export class ReportingService {
     const db = this.dbFactory.for(ctx);
     const survey = await db.survey.findUnique({ where: { id: surveyId }, select: { id: true, internalTitle: true, state: true } });
     if (!survey) throw notFound('Survey');
+    assertSurveyVisible(ctx, survey);
     const run = await db.surveyRun.findFirst({ where: { surveyId, kind: 'LIVE', state: { not: 'CANCELED' } }, include: { revision: { include: revisionInclude } }, orderBy: { createdAt: 'desc' } });
     return { survey, run };
   }
