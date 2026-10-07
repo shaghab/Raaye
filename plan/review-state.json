@@ -40,6 +40,15 @@
       "reviewId": 5440260147,
       "reviewedAt": "2026-10-07T09:23:18Z",
       "findings": 6
+    },
+    {
+      "headSha": "d6b9c6e",
+      "requestedAt": "2026-10-07T09:42:25.584429+00:00",
+      "status": "completed",
+      "round": 5,
+      "reviewId": 5440542998,
+      "reviewedAt": "2026-10-07T09:48:57Z",
+      "findings": 6
     }
   ],
   "processedFindings": [
@@ -274,6 +283,72 @@
       "action": "tracked",
       "issue": "https://github.com/shaghab/Raaye/issues/12",
       "resolved": true
+    },
+    {
+      "reviewId": 5440542998,
+      "commentId": 4205442433,
+      "threadId": "PRRT_kwDOU--Sjc6p2N3g",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Claim the send before relying on the policy snapshot",
+      "action": "fixed",
+      "commit": "7450a06",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440542998,
+      "commentId": 4205442445,
+      "threadId": "PRRT_kwDOU--Sjc6p2N3o",
+      "priority": "P1",
+      "file": "libs/server/src/contacts/import.service.ts",
+      "title": "Reject future-dated imported consent evidence",
+      "action": "fixed",
+      "commit": "fe6baf4",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440542998,
+      "commentId": 4205442458,
+      "threadId": "PRRT_kwDOU--Sjc6p2N3w",
+      "priority": "P1",
+      "file": "libs/server/src/surveys/surveys.service.ts",
+      "title": "Serialize archive with launch",
+      "action": "fixed",
+      "commit": "0248830",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440542998,
+      "commentId": 4205442465,
+      "threadId": "PRRT_kwDOU--Sjc6p2N30",
+      "priority": "P2",
+      "file": "libs/server/src/jobs/jobs.service.ts",
+      "title": "Do not reset a renewed job lease",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/14",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440542998,
+      "commentId": 4205442471,
+      "threadId": "PRRT_kwDOU--Sjc6p2N34",
+      "priority": "P2",
+      "file": "libs/domain/src/lib/edit-window.ts",
+      "title": "Use ingress sequence to break timestamp ties",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/15",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440542998,
+      "commentId": 4205442477,
+      "threadId": "PRRT_kwDOU--Sjc6p2N39",
+      "priority": "P2",
+      "file": "apps/api/src/controllers/surveys.controller.ts",
+      "title": "Hide draft surveys from Viewer reads",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/16",
+      "resolved": true
     }
   ],
   "issues": [
@@ -336,8 +411,26 @@
       "url": "https://github.com/shaghab/Raaye/issues/13",
       "priority": "Needs triage",
       "source": "self-identified while fixing https://github.com/shaghab/Raaye/pull/3#discussion_r4205211492 (first organization/Admin bootstrap in a live deployment)"
+    },
+    {
+      "number": 14,
+      "url": "https://github.com/shaghab/Raaye/issues/14",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205442465"
+    },
+    {
+      "number": 15,
+      "url": "https://github.com/shaghab/Raaye/issues/15",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205442471"
+    },
+    {
+      "number": 16,
+      "url": "https://github.com/shaghab/Raaye/issues/16",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205442477"
     }
   ],
   "blockers": [],
-  "updatedAt": "2026-10-07T09:42:15.480842+00:00"
+  "updatedAt": "2026-10-07T10:07:47.779749+00:00"
 }
