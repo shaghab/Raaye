@@ -106,13 +106,17 @@ export class ContactsListComponent {
   offset = 0;
 
   constructor() {
-    // Filters given in the URL (`/contacts?search=...&consent=...&group=...&tag=...&archived=true`) seed
-    // the controls, so a link can open a filtered view instead of the first unfiltered page.
+    // Filters given in the URL seed the controls, so a link can open a filtered view instead of the first
+    // unfiltered page. The keys are the contact query contract's (`search`, `consentStatus`, `groupId`,
+    // `tagId`, `archived`), the same ones the group and tag links emit.
     const params = this.route.snapshot.queryParamMap;
     this.search = params.get('search') ?? '';
-    this.consentStatus = params.getAll('consent').filter((status) => (CONSENT_STATUSES as readonly string[]).includes(status));
-    this.groupId = params.get('group');
-    this.tagId = params.get('tag');
+    this.consentStatus = params
+      .getAll('consentStatus')
+      .flatMap((value) => value.split(','))
+      .filter((status) => (CONSENT_STATUSES as readonly string[]).includes(status));
+    this.groupId = params.get('groupId');
+    this.tagId = params.get('tagId');
     this.archived = params.get('archived') === 'true';
     void this.load();
     void this.loadGroupsTags();
