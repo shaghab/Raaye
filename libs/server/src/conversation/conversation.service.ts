@@ -248,14 +248,18 @@ export class ConversationService implements JobHandler {
       return;
     }
     const expiresAt = new Date(s.now.getTime() + ENROLLMENT_TTL_HOURS * 3600_000);
-    const accept = await this.bindings.mint(s.tx, { organizationId: s.ctx.organizationId, connectionId: s.connection.id, contactId: contact.id, purpose: 'CONSENT_ACCEPT', mode: 'LIVE', expiresAt });
-    const decline = await this.bindings.mint(s.tx, { organizationId: s.ctx.organizationId, connectionId: s.connection.id, contactId: contact.id, purpose: 'CONSENT_DECLINE', mode: 'LIVE', expiresAt });
+    // Each button carries the version of the notice it was rendered with: a later re-prompt never
+    // changes what an earlier button agrees to.
+    const payload = { noticeVersion: s.org.participantNoticeVersion };
+    const accept = await this.bindings.mint(s.tx, { organizationId: s.ctx.organizationId, connectionId: s.connection.id, contactId: contact.id, purpose: 'CONSENT_ACCEPT', mode: 'LIVE', expiresAt, payload });
+    const decline = await this.bindings.mint(s.tx, { organizationId: s.ctx.organizationId, connectionId: s.connection.id, contactId: contact.id, purpose: 'CONSENT_DECLINE', mode: 'LIVE', expiresAt, payload });
     await this.queue(s, 'ENROLLMENT', { type: 'buttons', body, buttons: [{ id: accept.token, title: copy.consentAccept }, { id: decline.token, title: copy.consentDecline }] }, `consent-prompt:${s.event.id}`);
   }
 
-  private async applyConsentReply(s: Session, reply: 'ACCEPT' | 'DECLINE'): Promise<string> {
+  /** `boundNoticeVersion` comes from the tapped button; a typed reply uses the version of the open prompt. */
+  private async applyConsentReply(s: Session, reply: 'ACCEPT' | 'DECLINE', boundNoticeVersion?: number): Promise<string> {
     if (!s.contact || !s.conversation) return 'NO_CONTACT';
-    const shownNoticeVersion = (s.conversation.pendingContext as { noticeVersion?: number } | null)?.noticeVersion ?? s.org.participantNoticeVersion;
+    const shownNoticeVersion = boundNoticeVersion ?? (s.conversation.pendingContext as { noticeVersion?: number } | null)?.noticeVersion ?? s.org.participantNoticeVersion;
     await s.tx.conversation.update({ where: { id: s.conversation.id }, data: { pendingInput: null, pendingContext: asJsonOrNull(null) } });
     if (reply === 'DECLINE') {
       await this.replyText(s, copy.consentDeclined, 'consent');
@@ -298,9 +302,9 @@ export class ConversationService implements JobHandler {
       case 'PROFILE_OFFER_SKIP':
         return this.skipProfile(s, s.contact, binding.participationId);
       case 'CONSENT_ACCEPT':
-        return this.applyConsentReply(s, 'ACCEPT');
+        return this.applyConsentReply(s, 'ACCEPT', (binding.payload as { noticeVersion?: number } | null)?.noticeVersion);
       case 'CONSENT_DECLINE':
-        return this.applyConsentReply(s, 'DECLINE');
+        return this.applyConsentReply(s, 'DECLINE', (binding.payload as { noticeVersion?: number } | null)?.noticeVersion);
       case 'VIEW_RESULTS':
         return binding.snapshotId ? this.results.deliver(s.tx, s.ctx, s.contact, s.connection, binding.snapshotId, s.event.id) : 'ACTION_INVALID';
       case 'MENU_SELECT':

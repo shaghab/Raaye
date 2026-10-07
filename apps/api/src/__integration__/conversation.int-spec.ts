@@ -357,6 +357,21 @@ describe('participant conversation engine (R15-R22, R31-R42)', () => {
     const zaraEvents = await t.prisma.consentEvent.findMany({ where: { contactId: zara.id, type: 'GRANTED' } });
     expect(zaraEvents.length).toBeGreaterThan(0);
     expect(new Set(zaraEvents.map((event) => event.wordingVersion))).toEqual(new Set([String(shownToZara)]));
+    // An older button keeps the version it was rendered with, even after a re-prompt with newer wording.
+    const yusuf = (await request(t.server).post('/api/v1/contacts').set('Authorization', manager.authorization).send({ name: 'Yusuf Buttons', phone: '+923001000096' }).expect(201)).body;
+    await say(yusuf.id, 'START');
+    const firstPrompt = await last(yusuf.id);
+    expect(firstPrompt.controls.map((control) => control.label)).toContain('I agree');
+    const shownOnFirstButton = await version();
+    await changeNotice('Notice v+3: this consultation is voluntary and your answers stay with authorized administrators only. Reply STOP to leave.');
+    await say(yusuf.id, 'START');
+    const secondPrompt = await last(yusuf.id);
+    expect(secondPrompt.id).not.toBe(firstPrompt.id);
+    await tapLabel(yusuf.id, 'I agree', {}, (message) => message.id === firstPrompt.id);
+    const yusufEvents = await t.prisma.consentEvent.findMany({ where: { contactId: yusuf.id, type: 'GRANTED' } });
+    expect(yusufEvents.length).toBeGreaterThan(0);
+    expect(new Set(yusufEvents.map((event) => event.wordingVersion))).toEqual(new Set([String(shownOnFirstButton)]));
+    expect(await version()).toBe(shownOnFirstButton + 1);
   });
 
   it('forged or mismatched tokens and invalid options never create answers (R41)', async () => {
