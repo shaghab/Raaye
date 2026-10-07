@@ -9,7 +9,7 @@ What actually ran for this build, with outcomes. Environment: Linux sandbox, Nod
 | Lint (7 projects) | `pnpm lint` | passed |
 | Strict typecheck (apps, libs, test files, e2e) | `pnpm typecheck` | passed |
 | Unit tests | `pnpm test` | passed: contracts 4, domain 36, server 18, web 6 (64 tests) |
-| Integration tests (real PostgreSQL) | `pnpm test:integration` | passed: 11 suites, 62 tests |
+| Integration tests (real PostgreSQL) | `pnpm test:integration` | passed: 11 suites, 64 tests |
 | WhatsApp asset validation | `pnpm whatsapp:validate` | passed: 8 checks (3 Flows, 3 fixtures, 2 template specs) |
 | Production builds (api, worker, web) | `pnpm build` | passed; web initial bundle 658 kB raw / 161 kB transfer |
 | All of the above in one run | `pnpm verify` | passed (lint 11 s, typecheck 27 s, unit 11 s, integration 50 s, assets 2 s, builds 25 s) |
@@ -89,3 +89,7 @@ Three P1 findings were fixed with regression tests (signed webhook traffic for a
 ## Review round 5 (Codex, commit d6b9c6e)
 
 Three P1 findings were fixed with regression tests (the worker claims a queued message under the contact row lock and re-evaluates the send policy there; archive and launch serialize on the survey row; future-dated imported consent evidence is rejected at preview and revalidated at processing) and three P2 findings were tracked as GitHub issues #14, #15 and #16. The acceptance matrix was re-aligned with the `MVP.md` requirement IDs in the same round. After the fixes: `pnpm lint` passed (7 projects), `pnpm typecheck` passed (7 projects), unit tests passed for 6 projects (server 18), integration suite 11 suites / 62 tests passed.
+
+## Review round 6 (Codex, commit a583a1e)
+
+Two P1 findings were fixed with regression tests (the provider hand-off now runs under the contact row lock with a policy re-check, so a STOP either suppresses the message or waits for the provider's answer; draft edits serialize with launch on the survey row and launch refuses to freeze a revision edited after validation). No lower-priority findings were raised. After the fixes: `pnpm lint` passed (7 projects), `pnpm typecheck` passed (7 projects), unit tests passed for 6 projects (server 18), integration suite 11 suites / 64 tests passed.

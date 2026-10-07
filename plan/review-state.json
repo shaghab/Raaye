@@ -49,6 +49,15 @@
       "reviewId": 5440542998,
       "reviewedAt": "2026-10-07T09:48:57Z",
       "findings": 6
+    },
+    {
+      "headSha": "a583a1e",
+      "requestedAt": "2026-10-07T10:07:57.863835+00:00",
+      "status": "completed",
+      "round": 6,
+      "reviewId": 5440805333,
+      "reviewedAt": "2026-10-07T10:12:10Z",
+      "findings": 2
     }
   ],
   "processedFindings": [
@@ -349,6 +358,28 @@
       "action": "tracked",
       "issue": "https://github.com/shaghab/Raaye/issues/16",
       "resolved": true
+    },
+    {
+      "reviewId": 5440805333,
+      "commentId": 4205652884,
+      "threadId": "PRRT_kwDOU--Sjc6p2vDk",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Keep the contact lock through the provider handoff",
+      "action": "fixed",
+      "commit": "74d8a46",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440805333,
+      "commentId": 4205652871,
+      "threadId": "PRRT_kwDOU--Sjc6p2vDY",
+      "priority": "P1",
+      "file": "libs/server/src/surveys/surveys.service.ts",
+      "title": "Serialize draft updates with survey launch",
+      "action": "fixed",
+      "commit": "4f0cb82",
+      "resolved": true
     }
   ],
   "issues": [
@@ -432,5 +463,5 @@
     }
   ],
   "blockers": [],
-  "updatedAt": "2026-10-07T10:07:47.779749+00:00"
+  "updatedAt": "2026-10-07T10:23:11.385682+00:00"
 }
