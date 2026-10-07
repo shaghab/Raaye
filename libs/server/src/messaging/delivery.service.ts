@@ -279,56 +279,66 @@ export class DeliveryService implements JobHandler {
     await this.recordStatus(organizationId, connectionId, { phoneNumberId: '', providerMessageId, recipientIdentity: null, status: 'DELIVERED', providerAt: new Date(at.getTime() + 1000), errorCode: null, errorTitle: null });
   }
 
-  /** Append a provider status event and derive the display state without regression. */
+  /**
+   * Append a provider status event and derive the display state without regression. The event
+   * row and its projection (message delivery state, invitation state) commit together: a failed
+   * projection rolls the event back, so the provider's retry of the same status is applied instead
+   * of being dismissed as a duplicate.
+   */
   async recordStatus(organizationId: string, connectionId: string, status: NormalizedStatus): Promise<'RECORDED' | 'DUPLICATE' | 'UNMATCHED'> {
     const db = this.dbFactory.forOrganization(organizationId);
     const message = await this.findByProviderMessageId(organizationId, connectionId, status.providerMessageId);
     try {
-      await db.messageStatusEvent.create({
-        data: {
-          organizationId,
-          connectionId,
-          providerMessageId: status.providerMessageId,
-          messageId: message?.id ?? null,
-          status: status.status,
-          providerAt: status.providerAt,
-          receivedAt: this.clock.now(),
-          errorCode: status.errorCode,
-          errorTitle: status.errorTitle,
-          reconciledAt: message ? this.clock.now() : null,
-        },
+      await db.$transaction(async (tx) => {
+        const now = this.clock.now();
+        await tx.messageStatusEvent.create({
+          data: {
+            organizationId,
+            connectionId,
+            providerMessageId: status.providerMessageId,
+            messageId: message?.id ?? null,
+            status: status.status,
+            providerAt: status.providerAt,
+            receivedAt: now,
+            errorCode: status.errorCode,
+            errorTitle: status.errorTitle,
+            reconciledAt: message ? now : null,
+          },
+        });
+        if (message) await this.applyStatus(tx, message.id, status);
       });
     } catch (error) {
       if (isUniqueViolation(error)) return 'DUPLICATE';
       throw error;
     }
-    if (!message) return 'UNMATCHED';
-    await this.applyStatus(organizationId, message.id, status);
-    return 'RECORDED';
+    return message ? 'RECORDED' : 'UNMATCHED';
   }
 
   /**
-   * Promote the display state without regression. The rank comparison is part of the UPDATE's
-   * WHERE clause, so concurrent callbacks (a READ racing a SENT) cannot overwrite a higher state.
+   * Promote the display state without regression, inside the caller's transaction. The rank
+   * comparison is part of the UPDATE's WHERE clause, so concurrent callbacks (a READ racing a
+   * SENT) cannot overwrite a higher state.
    */
-  private async applyStatus(organizationId: string, messageId: string, status: NormalizedStatus): Promise<void> {
-    const db = this.dbFactory.forOrganization(organizationId);
+  async applyStatus(tx: TenantTx, messageId: string, status: NormalizedStatus): Promise<void> {
     if (status.status === 'FAILED') {
-      const changed = await db.message.updateMany({
+      const changed = await tx.message.updateMany({
         where: { id: messageId, deliveryState: { notIn: statesRankedAtLeast(DELIVERY_RANK['DELIVERED']) } },
         data: { deliveryState: 'FAILED', lastErrorCode: status.errorCode ?? 'PROVIDER_FAILED', lastStatusAt: status.providerAt },
       });
-      if (changed.count === 1) await db.$transaction(async (tx) => this.markInvitation(tx, messageId, 'FAILED', status.errorCode ?? 'PROVIDER_FAILED'));
+      if (changed.count === 1) await this.markInvitation(tx, messageId, 'FAILED', status.errorCode ?? 'PROVIDER_FAILED');
       return;
     }
     const newRank = DELIVERY_RANK[status.status] ?? 0;
-    await db.message.updateMany({
+    await tx.message.updateMany({
       where: { id: messageId, deliveryState: { notIn: statesRankedAtLeast(newRank) } },
       data: { deliveryState: status.status as DeliveryState, lastStatusAt: status.providerAt },
     });
   }
 
-  /** Match status events that arrived before their message row could be resolved. */
+  /**
+   * Match status events that arrived before their message row could be resolved. Linking the
+   * event and applying it commit together, so an event is only marked reconciled once applied.
+   */
   async reconcileUnmatched(organizationId: string, limit = 200): Promise<number> {
     const db = this.dbFactory.forOrganization(organizationId);
     const pending = await db.messageStatusEvent.findMany({ where: { messageId: null, reconciledAt: null }, orderBy: { receivedAt: 'asc' }, take: limit });
@@ -336,9 +346,12 @@ export class DeliveryService implements JobHandler {
     for (const event of pending) {
       const message = await this.findByProviderMessageId(organizationId, event.connectionId, event.providerMessageId);
       if (!message) continue;
-      await db.messageStatusEvent.update({ where: { id: event.id }, data: { messageId: message.id, reconciledAt: this.clock.now() } });
-      await this.applyStatus(organizationId, message.id, { phoneNumberId: '', providerMessageId: event.providerMessageId, recipientIdentity: null, status: event.status, providerAt: event.providerAt, errorCode: event.errorCode, errorTitle: event.errorTitle });
-      reconciled += 1;
+      await db.$transaction(async (tx) => {
+        const linked = await tx.messageStatusEvent.updateMany({ where: { id: event.id, reconciledAt: null }, data: { messageId: message.id, reconciledAt: this.clock.now() } });
+        if (linked.count !== 1) return;
+        await this.applyStatus(tx, message.id, { phoneNumberId: '', providerMessageId: event.providerMessageId, recipientIdentity: null, status: event.status, providerAt: event.providerAt, errorCode: event.errorCode, errorTitle: event.errorTitle });
+        reconciled += 1;
+      });
     }
     return reconciled;
   }

@@ -722,4 +722,51 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     }
     await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
   });
+
+  it('a status whose projection failed is applied by the provider retry and by the sweep instead of being dismissed as a duplicate (R44)', async () => {
+    const reader = await createContact('Retry Rida', '+923001000036', 'GRANTED');
+    const id = await createSurvey('Status retry', { audience: { mode: 'SELECTED', contactIds: [reader] } });
+    // Keep the mock provider's automatic sent/delivered callbacks away so the message is still ACCEPTED.
+    await t.prisma.simulatorState.upsert({ where: { id: 1 }, create: { id: 1, faults: { suppressAutoStatus: true } }, update: { faults: { suppressAutoStatus: true } } });
+    const launched = (await request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).send({ mode: 'NOW' }).expect(200)).body;
+    await drainJobs(t);
+    await t.prisma.simulatorState.update({ where: { id: 1 }, data: { faults: {} } });
+    const message = await t.prisma.message.findFirstOrThrow({ where: { runId: launched.liveRun.id } });
+    expect(message.deliveryState).toBe('ACCEPTED');
+    const delivery = t.app.get(DeliveryService);
+    const delivered = { phoneNumberId: '', providerMessageId: message.providerMessageId ?? '', recipientIdentity: null, status: 'DELIVERED' as const, providerAt: new Date(t.clock.now().getTime() + 5000), errorCode: null, errorTitle: null };
+    // The projection fails once after the event insert (a transient database error).
+    const projection = jest.spyOn(delivery, 'applyStatus').mockRejectedValueOnce(new Error('connection reset'));
+    await expect(delivery.recordStatus(orgId, message.connectionId, delivered)).rejects.toThrow('connection reset');
+    // Nothing of the failed delivery persisted: the event rolled back together with its projection.
+    expect(await t.prisma.messageStatusEvent.count({ where: { messageId: message.id, status: 'DELIVERED' } })).toBe(0);
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: message.id } })).deliveryState).toBe('ACCEPTED');
+    // The provider's retry of the same status is applied, not treated as a duplicate.
+    expect(await delivery.recordStatus(orgId, message.connectionId, delivered)).toBe('RECORDED');
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: message.id } })).deliveryState).toBe('DELIVERED');
+    expect(await t.prisma.messageStatusEvent.count({ where: { messageId: message.id, status: 'DELIVERED' } })).toBe(1);
+    // A genuine duplicate of an applied status still creates no second event.
+    expect(await delivery.recordStatus(orgId, message.connectionId, delivered)).toBe('DUPLICATE');
+    expect(await t.prisma.messageStatusEvent.count({ where: { messageId: message.id, status: 'DELIVERED' } })).toBe(1);
+    const dispatch = (await request(t.server).get(`/api/v1/surveys/${id}/dispatch`).set('Authorization', manager.authorization).expect(200)).body;
+    expect(dispatch.metrics).toMatchObject({ providerAccepted: 1, delivered: 1 });
+
+    // Sweep path: a READ that arrived before the message could be matched is linked and applied together.
+    const read = { ...delivered, providerMessageId: 'wamid.early.read', status: 'READ' as const, providerAt: new Date(t.clock.now().getTime() + 6000) };
+    expect(await delivery.recordStatus(orgId, message.connectionId, read)).toBe('UNMATCHED');
+    await t.prisma.message.update({ where: { id: message.id }, data: { providerMessageId: 'wamid.early.read' } });
+    projection.mockRejectedValueOnce(new Error('connection reset'));
+    await expect(sweepOnly(t)).rejects.toThrow('connection reset');
+    const unapplied = await t.prisma.messageStatusEvent.findFirstOrThrow({ where: { providerMessageId: 'wamid.early.read' } });
+    expect(unapplied.messageId).toBeNull();
+    expect(unapplied.reconciledAt).toBeNull();
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: message.id } })).deliveryState).toBe('DELIVERED');
+    await sweepOnly(t);
+    const applied = await t.prisma.messageStatusEvent.findFirstOrThrow({ where: { providerMessageId: 'wamid.early.read' } });
+    expect(applied.messageId).toBe(message.id);
+    expect(applied.reconciledAt).not.toBeNull();
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: message.id } })).deliveryState).toBe('READ');
+    projection.mockRestore();
+    await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
+  });
 });
