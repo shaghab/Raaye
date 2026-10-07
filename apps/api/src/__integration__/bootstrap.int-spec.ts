@@ -1,6 +1,9 @@
 import request from 'supertest';
-import { OrganizationBootstrapService, SeedService, parseBootstrapArgs } from '@raaye/server';
+import { OrganizationBootstrapService, SeedService, parseBootstrapArgs, type PrismaService } from '@raaye/server';
 import { bootTestApp, resetDatabase, seedUser, type TestApp } from '../testing/harness';
+
+type TransactionFn = Parameters<PrismaService['$transaction']>[0];
+type Tx = Parameters<TransactionFn>[0];
 
 describe('first-organization bootstrap for live deployments (issue #13)', () => {
   let t: TestApp;
@@ -76,6 +79,66 @@ describe('first-organization bootstrap for live deployments (issue #13)', () => 
     const third = await service.bootstrap({ name: 'Other', slug: 'other', adminEmail: 'lead@civic.org' });
     expect(third.revokedInvitations).toBe(0);
     expect((await t.prisma.staffInvitation.findUniqueOrThrow({ where: { id: adminInvite.body.id } })).revokedAt).toBeNull();
+  });
+
+  it('a re-run and an acceptance of the pending link serialize on the organization row', async () => {
+    const service = t.app.get(OrganizationBootstrapService);
+    const first = await service.bootstrap({ name: 'Race Org', slug: 'race-org', adminEmail: 'lead@race.org' });
+    const firstToken = new URL(first.acceptUrl).searchParams.get('token') ?? '';
+    const authorization = 'Bearer test:uid-race-lead:lead@race.org';
+
+    // A bootstrap re-run that pauses inside its transaction right after counting active Admins under the lock.
+    let reachedCount = false;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const gateTransaction = (tx: Tx): Tx =>
+      new Proxy(tx, {
+        get(txTarget, txProperty) {
+          const delegate = Reflect.get(txTarget, txProperty);
+          if (txProperty !== 'organizationMembership') return delegate;
+          return new Proxy(delegate as object, {
+            get(model, method) {
+              const value = Reflect.get(model, method);
+              if (method !== 'count') return typeof value === 'function' ? value.bind(model) : value;
+              return async (...args: unknown[]) => {
+                const count = await (value as (...inner: unknown[]) => Promise<number>).apply(model, args);
+                reachedCount = true;
+                await gate;
+                return count;
+              };
+            },
+          });
+        },
+      });
+    const gatedPrisma = new Proxy(t.prisma, {
+      get(target, property) {
+        const value = Reflect.get(target, property);
+        if (property !== '$transaction') return typeof value === 'function' ? value.bind(target) : value;
+        return (fn: TransactionFn) => target.$transaction((tx) => fn(gateTransaction(tx)));
+      },
+    });
+    const gated = new OrganizationBootstrapService(gatedPrisma, t.clock, t.config);
+    const rerun = gated.bootstrap({ name: 'Race Org', slug: 'race-org', adminEmail: 'lead@race.org' });
+    for (let i = 0; i < 300 && !reachedCount; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(reachedCount).toBe(true);
+
+    // The acceptance of the first link arrives while the re-run holds the organization lock...
+    const acceptance = request(t.server).post('/api/v1/staff-invitations/accept').set('Authorization', authorization).send({ token: firstToken }).then((response) => response);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    release();
+    const second = await rerun;
+    expect(second).toMatchObject({ organizationCreated: false, revokedInvitations: 1 });
+    // ...and finds the link revoked once it gets the lock: no Admin exists and only the new link is pending.
+    const response = await acceptance;
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe('INVITATION_INVALID');
+    expect(await t.prisma.organizationMembership.count({ where: { organizationId: first.organizationId, role: 'ADMIN', status: 'ACTIVE' } })).toBe(0);
+    expect(await t.prisma.staffInvitation.count({ where: { organizationId: first.organizationId, acceptedAt: null, revokedAt: null } })).toBe(1);
+    const secondToken = new URL(second.acceptUrl).searchParams.get('token') ?? '';
+    await request(t.server).post('/api/v1/staff-invitations/accept').set('Authorization', authorization).send({ token: secondToken }).expect(200);
+    await expect(service.bootstrap({ name: 'Race Org', slug: 'race-org', adminEmail: 'other@race.org' })).rejects.toMatchObject({ code: 'BOOTSTRAP_REFUSED' });
   });
 
   it('rejects invalid input with field errors and creates nothing', async () => {
