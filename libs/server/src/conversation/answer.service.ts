@@ -36,9 +36,13 @@ export class AnswerService {
     await tx.$queryRaw(Prisma.sql`SELECT id FROM participations WHERE id = ${input.participationId}::uuid AND organization_id = ${input.organizationId}::uuid FOR UPDATE`);
     const participation = await tx.participation.findUnique({
       where: { id: input.participationId },
-      include: { run: true, revision: { include: { questions: { include: { options: true }, orderBy: { position: 'asc' } } } } },
+      include: { revision: { include: { questions: { include: { options: true }, orderBy: { position: 'asc' } } } } },
     });
     if (!participation) return { outcome: 'REJECTED', code: 'TENANT_RESOURCE_NOT_FOUND', message: 'Participation not found' };
+    // Serialize with closure: closeRun updates the run row, so taking its lock here orders this write
+    // after any close that already committed, and the state is re-read once the lock is held.
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM survey_runs WHERE id = ${participation.runId}::uuid AND organization_id = ${input.organizationId}::uuid FOR UPDATE`);
+    const run = await tx.surveyRun.findUniqueOrThrow({ where: { id: participation.runId }, select: { state: true, closesAt: true } });
     const question = participation.revision.questions.find((candidate) => candidate.id === input.questionId);
     if (!question) return { outcome: 'REJECTED', code: 'QUESTION_OPTION_INVALID', message: 'Question does not belong to this survey' };
     const now = this.clock.now();
@@ -49,9 +53,9 @@ export class AnswerService {
     if (!validation.ok) return { outcome: 'REJECTED', code: validation.code, message: validation.message };
     const existing = await tx.answer.findUnique({ where: { organizationId_participationId_questionId: { organizationId: input.organizationId, participationId: participation.id, questionId: question.id } }, include: { revisions: { where: { isCurrent: true }, include: { selections: true } } } });
     if (!existing) {
-      const decision = evaluateFirstAnswer({ now, runState: participation.run.state, closesAt: participation.run.closesAt });
+      const decision = evaluateFirstAnswer({ now, runState: run.state, closesAt: run.closesAt });
       if (!decision.allowed) return { outcome: 'REJECTED', code: decision.reason, message: decision.reason };
-      const editExpiresAt = computeEditExpiry(now, participation.revision.editWindowSeconds, participation.run.closesAt);
+      const editExpiresAt = computeEditExpiry(now, participation.revision.editWindowSeconds, run.closesAt);
       try {
         const answer = await tx.answer.create({
           data: {
@@ -91,7 +95,7 @@ export class AnswerService {
     if (isStaleReply({ incomingProviderAt: input.providerAt, incomingReceivedAt: input.receivedAt, currentProviderAt: current.currentProviderAt, currentReceivedAt: current.currentReceivedAt })) {
       return { outcome: 'REJECTED', code: 'ANSWER_STALE', message: 'A newer answer is already recorded' };
     }
-    const decision = evaluateEdit({ now, runState: participation.run.state, closesAt: participation.run.closesAt, editExpiresAt: current.editExpiresAt });
+    const decision = evaluateEdit({ now, runState: run.state, closesAt: run.closesAt, editExpiresAt: current.editExpiresAt });
     if (!decision.allowed) return { outcome: 'REJECTED', code: decision.reason, message: decision.reason };
     const revisionNumber = current.currentRevisionNumber + 1;
     await tx.answerRevision.updateMany({ where: { answerId: current.id, isCurrent: true }, data: { isCurrent: false } });

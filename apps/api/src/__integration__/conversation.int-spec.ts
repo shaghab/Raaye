@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { JobRunner, signWebhookBody } from '@raaye/server';
+import { JobRunner, createTenantDb, signWebhookBody } from '@raaye/server';
 import { drainJobs } from '../testing/jobs';
 import { bootTestApp, resetDatabase, seedOrganization, seedUser, type SeededUser, type TestApp } from '../testing/harness';
 
@@ -512,6 +512,43 @@ describe('participant conversation engine (R15-R22, R31-R42)', () => {
     expect(accepted.body).toMatchObject({ accepted: 1, quarantined: 0 });
     await drainJobs(t);
     expect((await t.prisma.contact.findUniqueOrThrow({ where: { id: hamza.id } })).consentInvitations).toBe('WITHDRAWN');
+  });
+
+  it('an answer in flight while the survey closes is rejected, never recorded (R27, R37)', async () => {
+    const closer = await createContact('Closing Chand', '+923001000095', true);
+    const { surveyId, runId: raceRunId } = await launchSurvey('Closes mid-answer', [closer]);
+    await tapLabel(closer, 'Start survey');
+    await tapLabel(closer, 'Skip');
+    const question = await last(closer, (message) => message.kind === 'QUESTION');
+    const yes = question.controls.find((control) => control.label === 'Yes');
+    if (!yes) throw new Error('expected a Yes control on the first question');
+    const participation = await t.prisma.participation.findFirstOrThrow({ where: { runId: raceRunId, contactId: closer } });
+    const questionsBefore = (await outbound(closer)).filter((message) => message.kind === 'QUESTION').length;
+    // A close holds the run row lock, uncommitted, while the participant's answer is processed.
+    const tenantDb = createTenantDb(t.prisma, orgId);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const closing = tenantDb.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM survey_runs WHERE id = ${raceRunId}::uuid FOR UPDATE`;
+        await tx.surveyRun.updateMany({ where: { id: raceRunId, state: 'ACTIVE' }, data: { state: 'CLOSED', closedAt: t.clock.now(), closeReason: 'MANUAL', closesAt: t.clock.now() } });
+        await tx.survey.updateMany({ where: { id: surveyId }, data: { state: 'CLOSED' } });
+        await gate;
+      },
+      { timeout: 20_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await sim('tap', { contactId: closer, messageId: question.id, controlId: yes.id }).expect(200);
+    const draining = drainJobs(t);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    release();
+    await closing;
+    await draining;
+    expect(await t.prisma.answer.count({ where: { participationId: participation.id } })).toBe(0);
+    expect((await outbound(closer)).filter((message) => message.kind === 'QUESTION')).toHaveLength(questionsBefore);
+    expect((await last(closer)).text.toLowerCase()).toContain('closed');
   });
 
   it('internal task endpoints reject untrusted callers (R58)', async () => {
