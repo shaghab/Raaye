@@ -133,6 +133,17 @@
       "reviewedAt": "2026-10-07T12:25:01Z",
       "findings": 1,
       "outcome": "1 P2 finding on the verification record"
+    },
+    {
+      "headSha": "2f871f3",
+      "requestedAt": "2026-10-07T12:36:21.830670+00:00",
+      "status": "completed",
+      "round": 15,
+      "requestCommentId": 6038024702,
+      "reviewCommentId": 6038069705,
+      "reviewedAt": "2026-10-07T12:38:16Z",
+      "findings": 0,
+      "outcome": "no findings"
     }
   ],
   "processedFindings": [
@@ -585,9 +596,10 @@
       "file": "plan/verification.md",
       "title": "Correct the final verification commit attribution",
       "action": "corrected-in-record",
-      "commit": null,
-      "resolved": false,
-      "note": "Corrected in the round-14 record commit (verification record only); the commit sha is recorded in the next state update."
+      "commit": "2f871f3",
+      "resolved": true,
+      "note": "Corrected in the round-14 record commit (verification record only).",
+      "replyCommentId": 4206931088
     }
   ],
   "issues": [
@@ -689,5 +701,5 @@
     }
   ],
   "blockers": [],
-  "updatedAt": "2026-10-07T12:35:05.356033+00:00"
+  "updatedAt": "2026-10-07T12:40:25.428426+00:00"
 }
