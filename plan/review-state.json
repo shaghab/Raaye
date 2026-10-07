@@ -22,6 +22,15 @@
       "reviewId": 5439722008,
       "reviewedAt": "2026-10-07T08:35:55Z",
       "findings": 6
+    },
+    {
+      "headSha": "0ddb201",
+      "requestedAt": "2026-10-07T08:44:29.785338+00:00",
+      "status": "completed",
+      "round": 3,
+      "reviewId": 5439873411,
+      "reviewedAt": "2026-10-07T08:50:10Z",
+      "findings": 4
     }
   ],
   "processedFindings": [
@@ -146,6 +155,50 @@
       "action": "tracked",
       "issue": "https://github.com/shaghab/Raaye/issues/7",
       "resolved": true
+    },
+    {
+      "reviewId": 5439873411,
+      "commentId": 4204906817,
+      "threadId": "PRRT_kwDOU--Sjc6p05XX",
+      "priority": "P1",
+      "file": "libs/server/src/surveys/launch.service.ts",
+      "title": "Keep blocked survey activations retryable",
+      "action": "fixed",
+      "commit": "d988420",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439873411,
+      "commentId": 4204906827,
+      "threadId": "PRRT_kwDOU--Sjc6p05Xb",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/readiness.service.ts",
+      "title": "Honor disabled messaging connections",
+      "action": "fixed",
+      "commit": "09c9a95",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439873411,
+      "commentId": 4204906835,
+      "threadId": "PRRT_kwDOU--Sjc6p05Xh",
+      "priority": "P2",
+      "file": "libs/server/src/messaging/policy.ts",
+      "title": "Check only results consent for results invitations",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/8",
+      "resolved": true
+    },
+    {
+      "reviewId": 5439873411,
+      "commentId": 4204906846,
+      "threadId": "PRRT_kwDOU--Sjc6p05Xs",
+      "priority": "P2",
+      "file": "libs/server/src/conversation/conversation.service.ts",
+      "title": "Preserve the newest inbound service-window timestamp",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/9",
+      "resolved": true
     }
   ],
   "issues": [
@@ -172,8 +225,20 @@
       "url": "https://github.com/shaghab/Raaye/issues/7",
       "priority": "P2",
       "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204782354"
+    },
+    {
+      "number": 8,
+      "url": "https://github.com/shaghab/Raaye/issues/8",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204906835"
+    },
+    {
+      "number": 9,
+      "url": "https://github.com/shaghab/Raaye/issues/9",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4204906846"
     }
   ],
   "blockers": [],
-  "updatedAt": "2026-10-07T08:44:18.206958+00:00"
+  "updatedAt": "2026-10-07T09:15:04.387560+00:00"
 }

@@ -8,8 +8,8 @@ What actually ran for this build, with outcomes. Environment: Linux sandbox, Nod
 | --- | --- | --- |
 | Lint (7 projects) | `pnpm lint` | passed |
 | Strict typecheck (apps, libs, test files, e2e) | `pnpm typecheck` | passed |
-| Unit tests | `pnpm test` | passed: contracts 4, domain 36, server 16, web 6 (62 tests) |
-| Integration tests (real PostgreSQL) | `pnpm test:integration` | passed: 10 suites, 53 tests |
+| Unit tests | `pnpm test` | passed: contracts 4, domain 36, server 17, web 6 (63 tests) |
+| Integration tests (real PostgreSQL) | `pnpm test:integration` | passed: 10 suites, 55 tests |
 | WhatsApp asset validation | `pnpm whatsapp:validate` | passed: 8 checks (3 Flows, 3 fixtures, 2 template specs) |
 | Production builds (api, worker, web) | `pnpm build` | passed; web initial bundle 658 kB raw / 161 kB transfer |
 | All of the above in one run | `pnpm verify` | passed (lint 11 s, typecheck 27 s, unit 11 s, integration 50 s, assets 2 s, builds 25 s) |
@@ -76,3 +76,7 @@ Four P1 findings were fixed with regression tests and one P2 finding was tracked
 ## Review round 2 (Codex, commit 8c1ed4f)
 
 Three P1 findings were fixed with regression tests (audience filter composition, phone-change window reset, per-connection access token) and three P2 findings were tracked as GitHub issues #5, #6 and #7. After the fixes: `pnpm lint` passed, `pnpm typecheck` passed, server unit tests 16 passed, integration suite 10 suites / 53 tests passed.
+
+## Review round 3 (Codex, commit 0ddb201)
+
+Two P1 findings were fixed with regression tests (readiness is checked before a run is activated and blocked activations are retried by the sweep until the closing time; disabled messaging connections are honored by readiness, the send policy gate and the simulator) and two P2 findings were tracked as GitHub issues #8 and #9. After the fixes: `pnpm lint` passed (7 projects), `pnpm typecheck` passed (7 projects), unit tests passed for 6 projects (server 17), integration suite 10 suites / 55 tests passed, `pnpm whatsapp:validate` 8 checks passed.
