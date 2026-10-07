@@ -58,6 +58,15 @@
       "reviewId": 5440805333,
       "reviewedAt": "2026-10-07T10:12:10Z",
       "findings": 2
+    },
+    {
+      "headSha": "09d00d3",
+      "requestedAt": "2026-10-07T10:23:24.202643+00:00",
+      "status": "completed",
+      "round": 7,
+      "reviewId": 5440971685,
+      "reviewedAt": "2026-10-07T10:27:57Z",
+      "findings": 2
     }
   ],
   "processedFindings": [
@@ -380,6 +389,28 @@
       "action": "fixed",
       "commit": "4f0cb82",
       "resolved": true
+    },
+    {
+      "reviewId": 5440971685,
+      "commentId": 4205794656,
+      "threadId": "PRRT_kwDOU--Sjc6p3FwS",
+      "priority": "P1",
+      "file": "libs/server/src/surveys/surveys.service.ts",
+      "title": "Cancel active test runs when archiving",
+      "action": "fixed",
+      "commit": "1a10d91",
+      "resolved": true
+    },
+    {
+      "reviewId": 5440971685,
+      "commentId": 4205794663,
+      "threadId": "PRRT_kwDOU--Sjc6p3FwX",
+      "priority": "P2",
+      "file": "libs/server/src/surveys/launch.service.ts",
+      "title": "Serialize test-run creation with draft edits",
+      "action": "tracked",
+      "issue": "https://github.com/shaghab/Raaye/issues/17",
+      "resolved": true
     }
   ],
   "issues": [
@@ -460,8 +491,14 @@
       "url": "https://github.com/shaghab/Raaye/issues/16",
       "priority": "P2",
       "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205442477"
+    },
+    {
+      "number": 17,
+      "url": "https://github.com/shaghab/Raaye/issues/17",
+      "priority": "P2",
+      "source": "https://github.com/shaghab/Raaye/pull/3#discussion_r4205794663"
     }
   ],
   "blockers": [],
-  "updatedAt": "2026-10-07T10:23:11.385682+00:00"
+  "updatedAt": "2026-10-07T10:34:58.314674+00:00"
 }
