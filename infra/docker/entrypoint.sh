@@ -1,5 +1,5 @@
 #!/bin/sh
-# api | worker | bootstrap (migrate + seed) | any node command
+# api | worker | bootstrap (migrate + seed) | worker CLI command | any node command
 set -e
 case "$1" in
   api)
@@ -7,6 +7,9 @@ case "$1" in
     ;;
   worker)
     exec node dist/apps/worker/main.js worker
+    ;;
+  sweep|run-once|retention|seed|seed:scale|bootstrap:org)
+    exec node dist/apps/worker/main.js "$@"
     ;;
   bootstrap)
     echo "Applying migrations"
