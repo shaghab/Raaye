@@ -195,7 +195,7 @@ export class SurveysService {
     return this.get(ctx, newId);
   }
 
-  async archive(ctx: TenantContext, surveyId: string, cancelScheduled: (tx: TenantTx, runId: string) => Promise<void>): Promise<SurveyDetailDto> {
+  async archive(ctx: TenantContext, surveyId: string, cancelRun: (tx: TenantTx, runId: string) => Promise<void>): Promise<SurveyDetailDto> {
     if (ctx.role === 'VIEWER') throw forbidden();
     const db = this.dbFactory.for(ctx);
     await db.$transaction(async (tx) => {
@@ -204,8 +204,8 @@ export class SurveysService {
       await tx.$queryRaw`SELECT id FROM surveys WHERE id = ${surveyId}::uuid AND organization_id = ${ctx.organizationId}::uuid FOR UPDATE`;
       const survey = await this.load(tx, surveyId);
       if (survey.state === 'ACTIVE') throw new DomainError('SURVEY_STATE_INVALID', 'Close the survey before archiving it');
-      const scheduled = survey.runs.find((run) => run.kind === 'LIVE' && run.state === 'SCHEDULED');
-      if (scheduled) await cancelScheduled(tx, scheduled.id);
+      // A scheduled live run and any active test run (with its queued test sends) end here.
+      for (const run of survey.runs.filter((candidate) => candidate.state === 'SCHEDULED' || candidate.state === 'ACTIVE')) await cancelRun(tx, run.id);
       const guard = await tx.survey.updateMany({ where: { id: survey.id, state: survey.state }, data: { archivedAt: survey.archivedAt ?? this.clock.now(), state: survey.state === 'SCHEDULED' ? 'DRAFT' : survey.state } });
       if (guard.count !== 1) throw new DomainError('SURVEY_STATE_INVALID', 'The survey changed concurrently; reload and try again');
       await this.audit.record(ctx, { action: 'survey.archived', resourceType: 'survey', resourceId: survey.id }, tx);

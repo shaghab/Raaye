@@ -321,6 +321,23 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     }
   });
 
+  it('archiving cancels an active test run and its queued test sends (R30, R55)', async () => {
+    await drainJobs(t);
+    const id = await createSurvey('Archived with test run', { audience: { mode: 'SELECTED', contactIds: [contacts['Ehsan']] } });
+    const withTest = (await request(t.server).post(`/api/v1/surveys/${id}/test-runs`).set('Authorization', manager.authorization).send({ contactIds: [contacts['Ayesha']] })).body;
+    const testRun = withTest.testRuns[0];
+    expect(testRun.state).toBe('ACTIVE');
+    // Only the activation runs: the test invitation is queued, its send job still pending.
+    await t.app.get(JobRunner).runOnce(1, 1);
+    expect(await t.prisma.message.count({ where: { runId: testRun.id, state: 'PENDING' } })).toBe(1);
+    const archived = (await request(t.server).post(`/api/v1/surveys/${id}/archive`).set('Authorization', manager.authorization).expect(200)).body;
+    expect(archived.archivedAt).not.toBeNull();
+    expect(archived.testRuns[0].state).toBe('CANCELED');
+    await drainJobs(t);
+    expect((await t.prisma.message.findMany({ where: { runId: testRun.id } })).map((message) => message.state)).toEqual(['CANCELED']);
+    expect(await t.prisma.job.count({ where: { entityId: testRun.id, status: 'PENDING' } })).toBe(0);
+  });
+
   it('archive and launch of the same draft serialize: an archived survey never has live outreach (R55)', async () => {
     for (let round = 0; round < 4; round += 1) {
       const id = await createSurvey(`Race survey ${round}`, { audience: { mode: 'SELECTED', contactIds: [contacts['Ehsan']] } });
