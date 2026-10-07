@@ -44,7 +44,7 @@ Material choices made while implementing `MVP.md`, with the reasoning. Product s
 | Audit | Sensitive reads/exports/consent/retry/configuration changes are audited without personal data or selected answers (R06, R49). |
 | Demo accounts | `admin@pilap.demo`, `manager@pilap.demo`, `viewer@pilap.demo` plus a second tenant `admin@lcf.demo`. Created only when `ALLOW_DEMO_BOOTSTRAP=true`, which the configuration rejects in live/production mode (R57). |
 | Synthetic contacts | Seeded contacts carry `is_synthetic`; the live send policy refuses them unconditionally (R57). |
-| Disabled connection | Readiness reports `CONNECTION_DISABLED` for a disabled sender in mock and live mode; launches, test runs, result broadcasts and simulated inbound traffic are refused, and the send policy gate suppresses already queued messages with the same reason until an Admin re-enables the connection and retries them explicitly. |
+| Disabled connection | Readiness reports `CONNECTION_DISABLED` for a disabled sender in mock and live mode; launches, test runs, result broadcasts and simulated inbound traffic are refused, signed webhook batches are quarantined with that reason, and the send policy gate suppresses already queued messages with the same reason until an Admin re-enables the connection and retries them explicitly. |
 | Blocked activation | `activateRun` checks readiness before a scheduled run is committed as active. A blocked run keeps its state, records `dispatchBlockReason` plus one audit entry per reason change, and the sweep re-enqueues it every minute until messaging is repaired or the closing time passes, when it closes without sending. |
 
 ## Operational choices

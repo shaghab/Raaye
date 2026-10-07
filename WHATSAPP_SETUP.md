@@ -41,7 +41,7 @@ In the dashboard (Admin) open **Settings → Messaging** and enter the non-secre
 3. Subscribe to the `messages` field (message and status events).
 4. Subscribe the app to the WABA (`POST /{WABA_ID}/subscribed_apps`). `pnpm whatsapp:validate --live` describes this request; it is not executed automatically.
 
-Every `POST` is verified with `X-Hub-Signature-256` (HMAC-SHA256 of the raw bytes with the app secret). Payloads whose `phone_number_id` does not match the configured connection are quarantined, not attributed to the organization. All messages and statuses in a batch are processed; duplicates by `wamid` are ignored.
+Every `POST` is verified with `X-Hub-Signature-256` (HMAC-SHA256 of the raw bytes with the app secret). Payloads whose `phone_number_id` does not match the configured connection are quarantined, not attributed to the organization. While the connection is disabled in Settings, signed batches are quarantined with reason `CONNECTION_DISABLED` (retained 7 days) and change nothing. All messages and statuses in a batch are processed; duplicates by `wamid` are ignored.
 
 ## 4. Message templates
 

@@ -40,6 +40,11 @@ export class InboxService {
     return this.prisma.messagingConnection.findFirst({ where: { phoneNumberId, enabled: true } });
   }
 
+  /**
+   * App-key lookup for signature verification and the verify handshake. Disabled rows resolve
+   * so that a signed batch for a disabled sender is quarantined by `ingest` instead of
+   * being mistaken for an unknown app key.
+   */
   async connectionForAppKey(appKey: string): Promise<MessagingConnection | null> {
     return this.prisma.messagingConnection.findUnique({ where: { appKey } });
   }
@@ -48,6 +53,12 @@ export class InboxService {
     const result: IngestResult = { accepted: 0, duplicates: 0, statuses: 0, quarantined: 0 };
     const now = this.clock.now();
     const rawExpiresAt = new Date(now.getTime() + this.config.RAW_WEBHOOK_RETENTION_DAYS * 86_400_000);
+    if (options.connectionOverride && !options.connectionOverride.enabled) {
+      // A sender the operator disabled must not change consent, answers or delivery evidence.
+      await this.quarantine(options.appKey, 'CONNECTION_DISABLED', options.connectionOverride.phoneNumberId, { inbound: inbound.length, statuses: statuses.length }, now);
+      result.quarantined += 1;
+      return result;
+    }
     for (const event of inbound) {
       const connection = await this.resolveConnection(event.phoneNumberId, options.connectionOverride);
       if (!connection) {

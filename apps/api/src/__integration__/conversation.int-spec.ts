@@ -439,6 +439,34 @@ describe('participant conversation engine (R15-R22, R31-R42)', () => {
     await request(t.server).post('/api/v1/webhooks/whatsapp/unknown-key').set('Content-Type', 'application/json').send({}).expect(401);
   });
 
+  it('quarantines signed webhook traffic for a disabled connection instead of processing it (R40, R57)', async () => {
+    process.env['TEST_META_APP_SECRET'] = 'webhook-secret';
+    const connection = await t.prisma.messagingConnection.findFirstOrThrow({ where: { organizationId: orgId } });
+    await t.prisma.messagingConnection.update({ where: { id: connection.id }, data: { phoneNumberId: '111222333', appSecretRef: 'TEST_META_APP_SECRET', enabled: false } });
+    const hamza = (await request(t.server).post('/api/v1/contacts').set('Authorization', manager.authorization).send({ name: 'Hooked Hamza', phone: '+923001000077' }).expect(201)).body;
+    await request(t.server).post(`/api/v1/contacts/${hamza.id}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_INVITATIONS', 'SURVEY_RESULTS'], type: 'GRANTED', evidenceAt: '2026-09-01T00:00:00Z', evidenceReference: 'Form' }).expect(201);
+    const payload = {
+      object: 'whatsapp_business_account',
+      entry: [{ id: 'WABA', changes: [{ field: 'messages', value: { messaging_product: 'whatsapp', metadata: { display_phone_number: '1', phone_number_id: '111222333' }, contacts: [{ profile: { name: 'Hamza' }, wa_id: '923001000077' }], messages: [{ from: '923001000077', id: 'wamid.hook.disabled', timestamp: '1760000200', type: 'text', text: { body: 'STOP' } }] } }] }],
+    };
+    const rawString = JSON.stringify(payload);
+    const signature = signWebhookBody(Buffer.from(rawString, 'utf8'), 'webhook-secret');
+    const quarantinedBefore = await t.prisma.webhookQuarantine.count();
+    const refused = await request(t.server).post(`/api/v1/webhooks/whatsapp/${connection.appKey}`).set('Content-Type', 'application/json').set('X-Hub-Signature-256', signature).send(rawString).expect(200);
+    expect(refused.body).toMatchObject({ received: true, accepted: 0, quarantined: 1 });
+    expect(await t.prisma.inboundEvent.count({ where: { providerMessageId: 'wamid.hook.disabled' } })).toBe(0);
+    expect(await t.prisma.webhookQuarantine.count()).toBe(quarantinedBefore + 1);
+    expect(await t.prisma.webhookQuarantine.count({ where: { appKey: connection.appKey, reason: 'CONNECTION_DISABLED' } })).toBe(1);
+    await drainJobs(t);
+    expect((await t.prisma.contact.findUniqueOrThrow({ where: { id: hamza.id } })).consentInvitations).toBe('GRANTED');
+    // Re-enabling lets the same delivery through and the STOP takes effect.
+    await t.prisma.messagingConnection.update({ where: { id: connection.id }, data: { enabled: true } });
+    const accepted = await request(t.server).post(`/api/v1/webhooks/whatsapp/${connection.appKey}`).set('Content-Type', 'application/json').set('X-Hub-Signature-256', signature).send(rawString).expect(200);
+    expect(accepted.body).toMatchObject({ accepted: 1, quarantined: 0 });
+    await drainJobs(t);
+    expect((await t.prisma.contact.findUniqueOrThrow({ where: { id: hamza.id } })).consentInvitations).toBe('WITHDRAWN');
+  });
+
   it('internal task endpoints reject untrusted callers (R58)', async () => {
     await request(t.server).post('/api/v1/internal/sweep').expect(401);
     await request(t.server).post('/api/v1/internal/sweep').set('Authorization', 'Bearer wrong').expect(401);

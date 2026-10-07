@@ -23,7 +23,7 @@
 
 ## Messaging and webhooks
 
-- Webhook signatures are verified over the exact raw request bytes with a timing-safe comparison before anything is written. Unknown sender connections are quarantined without touching any organization.
+- Webhook signatures are verified over the exact raw request bytes with a timing-safe comparison before anything is written. Unknown sender connections are quarantined without touching any organization, and so is traffic for a connection an Admin disabled; the send policy refuses to use a disabled sender.
 - Action tokens are opaque, bound to connection + contact + participation + question, and expire. A reply is attached only where its binding says; never "the most recent survey".
 - Synthetic (seeded) contacts can never be sent to a live provider. Live configuration refuses emulator flags, simulator routes, demo bootstrap and weak internal tokens, and never falls back to mock.
 - A timed-out send is recorded as `UNKNOWN`; it is never retried automatically. An Admin must explicitly acknowledge the duplicate risk to retry.
