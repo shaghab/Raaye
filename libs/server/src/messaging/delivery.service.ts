@@ -103,61 +103,71 @@ export class DeliveryService implements JobHandler {
   async send(organizationId: string, messageId: string, options: { overrideUnknown?: boolean; authorizedByUserId?: string | null } = {}): Promise<'ACCEPTED' | 'SUPPRESSED' | 'FAILED' | 'UNKNOWN' | 'SKIPPED'> {
     const db = this.dbFactory.forOrganization(organizationId);
     const now = this.clock.now();
-    const message = await db.message.findUnique({ where: { id: messageId }, include: { contact: true, connection: true, run: true, attempts: true } });
-    if (!message) return 'SKIPPED';
-    const inFlight = message.attempts.find((attempt) => attempt.outcome === 'IN_FLIGHT');
+    const initial = await db.message.findUnique({ where: { id: messageId }, include: { attempts: true } });
+    if (!initial) return 'SKIPPED';
+    const inFlight = initial.attempts.find((attempt) => attempt.outcome === 'IN_FLIGHT');
     if (inFlight) {
       // A previous worker died while a send was in progress: the outcome is ambiguous.
       await db.$transaction(async (tx) => {
         await tx.messageAttempt.update({ where: { id: inFlight.id }, data: { outcome: 'UNKNOWN', finishedAt: now, errorCode: 'LEASE_LOST' } });
-        await tx.message.update({ where: { id: message.id }, data: { state: 'UNKNOWN', deliveryState: 'UNKNOWN', lastErrorCode: 'LEASE_LOST' } });
-        await this.markInvitation(tx, message.id, 'UNKNOWN', 'LEASE_LOST');
+        await tx.message.update({ where: { id: initial.id }, data: { state: 'UNKNOWN', deliveryState: 'UNKNOWN', lastErrorCode: 'LEASE_LOST' } });
+        await this.markInvitation(tx, initial.id, 'UNKNOWN', 'LEASE_LOST');
       });
       return 'UNKNOWN';
     }
-    if (message.state !== 'PENDING') return 'SKIPPED';
-    const conversation = await db.conversation.findUnique({ where: { organizationId_contactId: { organizationId, contactId: message.contactId } } });
-    const rendered = message.rendered as RenderedMessage;
+    if (initial.state !== 'PENDING') return 'SKIPPED';
     const mode = this.provider.mode;
-    const templatePurpose = this.templatePurposeFor(message.kind);
-    const template = templatePurpose
-      ? await db.templateBinding.findFirst({ where: { connectionId: message.connectionId, purpose: templatePurpose, locale: rendered.type === 'template' ? rendered.language : 'en' } })
-      : null;
-    const flow = rendered.type === 'flow' ? await db.flowBinding.findFirst({ where: { connectionId: message.connectionId, purpose: rendered.purpose } }) : null;
-    const decision = evaluateSendPolicy({
-      now,
-      providerMode: mode,
-      kind: message.kind,
-      isFreeForm: message.isFreeForm,
-      isTest: message.isTest,
-      connectionEnabled: message.connection.enabled,
-      contact: message.contact,
-      lastInboundAt: conversation?.lastInboundAt ?? null,
-      run: message.run && message.kind !== 'OPT_OUT_ACK' ? { state: message.run.state, closesAt: message.run.closesAt } : null,
-      templateReady: mode === 'mock' ? true : template?.status === 'APPROVED',
-      flowReady: mode === 'mock' ? true : flow?.status === 'PUBLISHED' && Boolean(flow.providerFlowId),
-      needsFlow: rendered.type === 'flow',
-      priorUnknownAttempts: options.overrideUnknown ? 0 : message.attempts.filter((attempt) => attempt.outcome === 'UNKNOWN').length,
-      priorAcceptedAttempts: message.attempts.filter((attempt) => attempt.outcome === 'ACCEPTED').length,
-    });
     const ctx: SystemContext = { organizationId, correlationId: messageId, actor: 'SYSTEM' };
-    if (!decision.allowed) {
-      await db.$transaction(async (tx) => {
+    // Claim the message under the contact row lock. Consent decisions (STOP, staff withdrawal,
+    // import attestation) take the same lock, so the policy is evaluated on state that no decision
+    // can invalidate before the hand-off, and a message canceled meanwhile is never revived.
+    const claim = await db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM contacts WHERE id = ${initial.contactId}::uuid AND organization_id = ${organizationId}::uuid FOR UPDATE`;
+      const message = await tx.message.findUnique({ where: { id: messageId }, include: { contact: true, connection: true, run: true, attempts: true } });
+      if (!message || message.state !== 'PENDING') return { outcome: 'SKIPPED' as const };
+      const conversation = await tx.conversation.findUnique({ where: { organizationId_contactId: { organizationId, contactId: message.contactId } } });
+      const rendered = message.rendered as RenderedMessage;
+      const templatePurpose = this.templatePurposeFor(message.kind);
+      const template = templatePurpose
+        ? await tx.templateBinding.findFirst({ where: { connectionId: message.connectionId, purpose: templatePurpose, locale: rendered.type === 'template' ? rendered.language : 'en' } })
+        : null;
+      const flow = rendered.type === 'flow' ? await tx.flowBinding.findFirst({ where: { connectionId: message.connectionId, purpose: rendered.purpose } }) : null;
+      const decision = evaluateSendPolicy({
+        now,
+        providerMode: mode,
+        kind: message.kind,
+        isFreeForm: message.isFreeForm,
+        isTest: message.isTest,
+        connectionEnabled: message.connection.enabled,
+        contact: message.contact,
+        lastInboundAt: conversation?.lastInboundAt ?? null,
+        run: message.run && message.kind !== 'OPT_OUT_ACK' ? { state: message.run.state, closesAt: message.run.closesAt } : null,
+        templateReady: mode === 'mock' ? true : template?.status === 'APPROVED',
+        flowReady: mode === 'mock' ? true : flow?.status === 'PUBLISHED' && Boolean(flow.providerFlowId),
+        needsFlow: rendered.type === 'flow',
+        priorUnknownAttempts: options.overrideUnknown ? 0 : message.attempts.filter((attempt) => attempt.outcome === 'UNKNOWN').length,
+        priorAcceptedAttempts: message.attempts.filter((attempt) => attempt.outcome === 'ACCEPTED').length,
+      });
+      if (!decision.allowed) {
         await tx.message.update({ where: { id: message.id }, data: { state: 'SUPPRESSED', deliveryState: 'SUPPRESSED', suppressionReason: decision.reason } });
         await this.markInvitation(tx, message.id, 'SUPPRESSED', decision.reason);
         await this.audit.record(ctx, { action: 'message.suppressed', resourceType: 'message', resourceId: message.id, metadata: { reason: decision.reason, kind: message.kind } }, tx);
-      });
-      this.logger.info({ messageId: message.id, reason: decision.reason, kind: message.kind }, 'Message suppressed by policy');
-      return 'SUPPRESSED';
-    }
-    const attemptNumber = message.attempts.length + 1;
-    const attempt = await db.$transaction(async (tx) => {
-      const created = await tx.messageAttempt.create({
+        return { outcome: 'SUPPRESSED' as const, reason: decision.reason, kind: message.kind };
+      }
+      const claimed = await tx.message.updateMany({ where: { id: message.id, state: 'PENDING' }, data: { state: 'SENDING' } });
+      if (claimed.count !== 1) return { outcome: 'SKIPPED' as const };
+      const attemptNumber = message.attempts.length + 1;
+      const attempt = await tx.messageAttempt.create({
         data: { organizationId, messageId: message.id, attemptNumber, startedAt: now, outcome: 'IN_FLIGHT', leaseOwner: this.jobs.workerId, authorizedByUserId: options.authorizedByUserId ?? null },
       });
-      await tx.message.update({ where: { id: message.id }, data: { state: 'SENDING' } });
-      return created;
+      return { outcome: 'CLAIMED' as const, message, rendered, flow, attempt, attemptNumber };
     });
+    if (claim.outcome === 'SKIPPED') return 'SKIPPED';
+    if (claim.outcome === 'SUPPRESSED') {
+      this.logger.info({ messageId, reason: claim.reason, kind: claim.kind }, 'Message suppressed by policy');
+      return 'SUPPRESSED';
+    }
+    const { message, rendered, flow, attempt, attemptNumber } = claim;
     const result = await this.provider.send({
       connection: { id: message.connection.id, phoneNumberId: message.connection.phoneNumberId, graphVersion: message.connection.graphVersion, appKey: message.connection.appKey, accessTokenRef: message.connection.accessTokenRef },
       to: message.contact.phoneE164.replace(/^\+/, ''),

@@ -189,6 +189,41 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     expect(await t.prisma.messageAttempt.count({ where: { messageId: after?.id ?? '' } })).toBe(0);
   });
 
+  it('a STOP that commits after the policy snapshot is never overtaken by the send (R15)', async () => {
+    const racer = await createContact('Racing Rida', '+923001000031', 'GRANTED');
+    const id = await createSurvey('Stop during send', { audience: { mode: 'SELECTED', contactIds: [racer] } });
+    const launched = (await request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).send({ mode: 'NOW' }).expect(200)).body;
+    await t.app.get(JobRunner).runOnce(1, 1);
+    const pending = await t.prisma.message.findFirstOrThrow({ where: { runId: launched.liveRun.id } });
+    expect(pending.state).toBe('PENDING');
+    const tenantDb = createTenantDb(t.prisma, orgId);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // An uncommitted STOP holds the contact lock, cancels the queued message and withdraws consent.
+    const stop = tenantDb.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM contacts WHERE id = ${racer}::uuid FOR UPDATE`;
+        await tx.message.updateMany({ where: { id: pending.id }, data: { state: 'CANCELED', deliveryState: 'CANCELED', suppressionReason: 'CONTACT_WITHDRAWN' } });
+        await tx.contact.update({ where: { id: racer }, data: { consentInvitations: 'WITHDRAWN' } });
+        await gate;
+      },
+      { timeout: 20_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    // The worker starts sending while the STOP is still uncommitted; it must wait for the decision.
+    const sending = t.app.get(DeliveryService).send(orgId, pending.id);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    release();
+    await stop;
+    expect(await sending).toBe('SKIPPED');
+    const after = await t.prisma.message.findUniqueOrThrow({ where: { id: pending.id }, include: { attempts: true } });
+    expect(after.state).toBe('CANCELED');
+    expect(after.attempts).toHaveLength(0);
+    await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
+  });
+
   it('schedules with a 48-hour default, survives restart via durable jobs, unschedules, activates and closes on time (R25, R26, R27, R29)', async () => {
     const id = await createSurvey('Scheduled survey');
     const opensAt = '2026-10-11T04:00:00.000Z'; // 09:00 Asia/Karachi
