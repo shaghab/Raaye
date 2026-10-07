@@ -353,8 +353,9 @@ export class ImportService {
       if (completed.count === 1) await this.audit.record(ctx, { action: 'import.completed', resourceType: 'import_batch', resourceId: batchId, metadata: { created, updated, failures: failures.length } });
       return toBatchDto(await db.importBatch.findUniqueOrThrow({ where: { id: batchId } }), completedAt);
     } catch (error) {
-      const reason = error instanceof Error ? error.message.slice(0, 500) : 'Import failed';
-      this.logger.error({ batchId, err: reason, created, updated }, 'Import processing stopped');
+      // The first line of the message names the failure without echoing row data; the log gets only the error kind.
+      const reason = error instanceof Error ? (error.message.split('\n')[0] ?? '').trim().slice(0, 200) || error.name : 'Import failed';
+      this.logger.error({ batchId, errorKind: error instanceof Error ? error.name : typeof error, created, updated }, 'Import processing stopped');
       let summary: ImportSummaryDto;
       try {
         // Record the failure with what was applied so far.
