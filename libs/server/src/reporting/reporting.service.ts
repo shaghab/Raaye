@@ -261,17 +261,19 @@ export class ReportingService {
   async overview(ctx: TenantContext): Promise<OverviewDto> {
     const db = this.dbFactory.for(ctx);
     const now = this.clock.now();
+    // Viewers see published surveys only (R06): drafts are absent from their counts and recent list.
+    const published: Prisma.SurveyWhereInput = ctx.role === 'VIEWER' ? { state: { not: 'DRAFT' } } : {};
     const [total, eligible, withdrawn, unknown, draft, scheduled, active, closed, archived, recentSurveys, failedMessages, unknownOutcomes, blocked, deadJobs] = await Promise.all([
       db.contact.count({ where: { archivedAt: null } }),
       db.contact.count({ where: { archivedAt: null, consentInvitations: 'GRANTED' } }),
       db.contact.count({ where: { archivedAt: null, consentInvitations: 'WITHDRAWN' } }),
       db.contact.count({ where: { archivedAt: null, consentInvitations: 'UNKNOWN' } }),
-      db.survey.count({ where: { archivedAt: null, state: 'DRAFT' } }),
+      ctx.role === 'VIEWER' ? Promise.resolve(0) : db.survey.count({ where: { archivedAt: null, state: 'DRAFT' } }),
       db.survey.count({ where: { archivedAt: null, state: 'SCHEDULED' } }),
       db.survey.count({ where: { archivedAt: null, state: 'ACTIVE' } }),
       db.survey.count({ where: { archivedAt: null, state: 'CLOSED' } }),
-      db.survey.count({ where: { archivedAt: { not: null } } }),
-      db.survey.findMany({ where: { archivedAt: null }, orderBy: { updatedAt: 'desc' }, take: 6, include: { runs: { where: { kind: 'LIVE', state: { not: 'CANCELED' } }, take: 1 } } }),
+      db.survey.count({ where: { archivedAt: { not: null }, ...published } }),
+      db.survey.findMany({ where: { archivedAt: null, ...published }, orderBy: { updatedAt: 'desc' }, take: 6, include: { runs: { where: { kind: 'LIVE', state: { not: 'CANCELED' } }, take: 1 } } }),
       db.message.count({ where: { state: 'FAILED', isTest: false } }),
       db.message.count({ where: { state: 'UNKNOWN', isTest: false } }),
       db.surveyRun.findMany({ where: { dispatchBlockReason: { not: null }, state: { in: ['SCHEDULED', 'ACTIVE'] } }, include: { survey: { select: { id: true, internalTitle: true } } } }),

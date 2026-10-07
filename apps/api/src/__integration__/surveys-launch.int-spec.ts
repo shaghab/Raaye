@@ -105,6 +105,14 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     await request(t.server).get(`/api/v1/surveys/${draftId}`).set('Authorization', manager.authorization).expect(200);
     await request(t.server).get(`/api/v1/surveys/${draftId}`).set('Authorization', admin.authorization).expect(200);
     await request(t.server).post(`/api/v1/surveys/${draftId}/preview`).set('Authorization', admin.authorization).expect(200);
+    // The overview applies the same rule: no draft in the recent list or the counts.
+    const viewerOverview = (await request(t.server).get('/api/v1/overview').set('Authorization', viewer.authorization).expect(200)).body;
+    expect(viewerOverview.recent.some((item: { id: string; state: string }) => item.id === draftId || item.state === 'DRAFT')).toBe(false);
+    expect(viewerOverview.surveys.draft).toBe(0);
+    const managerOverview = (await request(t.server).get('/api/v1/overview').set('Authorization', manager.authorization).expect(200)).body;
+    expect(managerOverview.recent.some((item: { id: string }) => item.id === draftId)).toBe(true);
+    const archivedDrafts = await t.prisma.survey.count({ where: { organizationId: orgId, archivedAt: { not: null }, state: 'DRAFT' } });
+    expect(viewerOverview.surveys.archived).toBe(managerOverview.surveys.archived - archivedDrafts);
   });
 
   it('enforces authoring limits and Admin-only timing (R20, matrix)', async () => {
