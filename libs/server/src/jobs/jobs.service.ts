@@ -36,6 +36,35 @@ export interface ClaimedJob {
   payload: Record<string, unknown> | null;
   attempts: number;
   maxAttempts: number;
+  /** The lease this claim holds. Completion and failure only apply while the row still carries it. */
+  leaseOwner: string;
+  leaseExpiresAt: Date;
+}
+
+interface ClaimedRow {
+  id: string;
+  organization_id: string;
+  kind: JobKind;
+  entity_id: string | null;
+  payload: unknown;
+  attempts: number;
+  max_attempts: number;
+  lease_owner: string;
+  lease_expires_at: Date;
+}
+
+function toClaimedJob(row: ClaimedRow): ClaimedJob {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    kind: row.kind,
+    entityId: row.entity_id,
+    payload: (row.payload as Record<string, unknown> | null) ?? null,
+    attempts: row.attempts,
+    maxAttempts: row.max_attempts,
+    leaseOwner: row.lease_owner,
+    leaseExpiresAt: new Date(row.lease_expires_at),
+  };
 }
 
 /** Job priorities: lower runs first. Replies beat bulk invitations. */
@@ -141,9 +170,7 @@ export class JobsService {
   /** Narrow control-plane claim: returns due pending jobs under a lease, across tenants. */
   async claimDue(limit: number, now = this.clock.now()): Promise<ClaimedJob[]> {
     const leaseUntil = new Date(now.getTime() + this.config.JOB_LEASE_SECONDS * 1000);
-    const rows = await this.prisma.$queryRaw<
-      { id: string; organization_id: string; kind: JobKind; entity_id: string | null; payload: unknown; attempts: number; max_attempts: number }[]
-    >(Prisma.sql`
+    const rows = await this.prisma.$queryRaw<ClaimedRow[]>(Prisma.sql`
       UPDATE jobs SET status = 'RUNNING', lease_owner = ${this.workerId}, lease_expires_at = ${leaseUntil}, attempts = attempts + 1, updated_at = ${now}
       WHERE id IN (
         SELECT id FROM jobs
@@ -152,84 +179,82 @@ export class JobsService {
         LIMIT ${limit}
         FOR UPDATE SKIP LOCKED
       )
-      RETURNING id, organization_id, kind, entity_id, payload, attempts, max_attempts
+      RETURNING id, organization_id, kind, entity_id, payload, attempts, max_attempts, lease_owner, lease_expires_at
     `);
-    return rows.map((row) => ({
-      id: row.id,
-      organizationId: row.organization_id,
-      kind: row.kind,
-      entityId: row.entity_id,
-      payload: (row.payload as Record<string, unknown> | null) ?? null,
-      attempts: row.attempts,
-      maxAttempts: row.max_attempts,
-    }));
+    return rows.map(toClaimedJob);
   }
 
   /** Claim one specific job (Cloud Tasks delivery). Returns null when it is not claimable. */
   async claimOne(jobId: string, now = this.clock.now()): Promise<ClaimedJob | null> {
     const leaseUntil = new Date(now.getTime() + this.config.JOB_LEASE_SECONDS * 1000);
-    const rows = await this.prisma.$queryRaw<
-      { id: string; organization_id: string; kind: JobKind; entity_id: string | null; payload: unknown; attempts: number; max_attempts: number }[]
-    >(Prisma.sql`
+    const rows = await this.prisma.$queryRaw<ClaimedRow[]>(Prisma.sql`
       UPDATE jobs SET status = 'RUNNING', lease_owner = ${this.workerId}, lease_expires_at = ${leaseUntil}, attempts = attempts + 1, updated_at = ${now}
       WHERE id = ${jobId}::uuid AND due_at <= ${now}
         AND (status = 'PENDING' OR (status = 'RUNNING' AND lease_expires_at < ${now}))
-      RETURNING id, organization_id, kind, entity_id, payload, attempts, max_attempts
+      RETURNING id, organization_id, kind, entity_id, payload, attempts, max_attempts, lease_owner, lease_expires_at
     `);
     const row = rows[0];
-    if (!row) return null;
-    return {
-      id: row.id,
-      organizationId: row.organization_id,
-      kind: row.kind,
-      entityId: row.entity_id,
-      payload: (row.payload as Record<string, unknown> | null) ?? null,
-      attempts: row.attempts,
-      maxAttempts: row.max_attempts,
-    };
+    return row ? toClaimedJob(row) : null;
   }
 
-  async complete(jobId: string): Promise<void> {
-    await this.prisma.job.updateMany({
-      where: { id: jobId, status: 'RUNNING' },
+  /** Only the holder of the row's current lease may settle it: an expired lease may have been reclaimed. */
+  private owned(job: ClaimedJob): Prisma.JobWhereInput {
+    return { id: job.id, status: 'RUNNING', leaseOwner: job.leaseOwner, leaseExpiresAt: job.leaseExpiresAt };
+  }
+
+  private lost(job: ClaimedJob, outcome: string): 'LOST' {
+    this.logger.warn({ jobId: job.id, kind: job.kind, attempt: job.attempts, outcome }, 'Job lease lost before the outcome was recorded; outcome ignored');
+    return 'LOST';
+  }
+
+  /** Mark the job succeeded while the caller still holds its lease. */
+  async complete(job: ClaimedJob): Promise<'DONE' | 'LOST'> {
+    const result = await this.prisma.job.updateMany({
+      where: this.owned(job),
       data: { status: 'SUCCEEDED', finishedAt: this.clock.now(), leaseOwner: null, leaseExpiresAt: null },
     });
+    return result.count === 1 ? 'DONE' : this.lost(job, 'SUCCEEDED');
   }
 
-  /** Retry with exponential backoff and jitter, or fail permanently. */
-  async fail(job: ClaimedJob, errorCode: string, retryable: boolean): Promise<'RETRY' | 'FAILED'> {
+  /** Retry with exponential backoff and jitter, or fail permanently, while the caller still holds the lease. */
+  async fail(job: ClaimedJob, errorCode: string, retryable: boolean): Promise<'RETRY' | 'FAILED' | 'LOST'> {
     const now = this.clock.now();
     if (!retryable || job.attempts >= job.maxAttempts) {
-      await this.prisma.job.updateMany({
-        where: { id: job.id, status: 'RUNNING' },
+      const result = await this.prisma.job.updateMany({
+        where: this.owned(job),
         data: { status: 'FAILED', finishedAt: now, lastErrorCode: errorCode, lastErrorAt: now, leaseOwner: null, leaseExpiresAt: null },
       });
-      return 'FAILED';
+      return result.count === 1 ? 'FAILED' : this.lost(job, 'FAILED');
     }
     const base = Math.min(300, 5 * 2 ** (job.attempts - 1));
     const jitter = Math.random() * base * 0.25;
     const dueAt = new Date(now.getTime() + (base + jitter) * 1000);
-    await this.prisma.job.updateMany({
-      where: { id: job.id, status: 'RUNNING' },
+    const result = await this.prisma.job.updateMany({
+      where: this.owned(job),
       data: { status: 'PENDING', dueAt, lastErrorCode: errorCode, lastErrorAt: now, leaseOwner: null, leaseExpiresAt: null, pushedAt: null },
     });
+    if (result.count !== 1) return this.lost(job, 'RETRY');
     this.schedulePush();
     return 'RETRY';
   }
 
-  /** Jobs whose worker died keep their attempt count and become claimable again. */
+  /**
+   * Jobs whose worker died keep their attempt count and become claimable again (or fail once the
+   * attempts are exhausted). One conditional statement: a lease renewed between the sweep's read and
+   * its write no longer satisfies `lease_expires_at < now`, so a job that was reclaimed meanwhile is
+   * never reset underneath its new holder. Returns the number of jobs re-queued.
+   */
   async recoverExpiredLeases(now = this.clock.now()): Promise<number> {
-    const expired = await this.prisma.job.findMany({ where: { status: 'RUNNING', leaseExpiresAt: { lt: now } }, select: { id: true, attempts: true, maxAttempts: true } });
-    let recovered = 0;
-    for (const job of expired) {
-      if (job.attempts >= job.maxAttempts) {
-        await this.prisma.job.updateMany({ where: { id: job.id, status: 'RUNNING' }, data: { status: 'FAILED', lastErrorCode: 'LEASE_EXPIRED', lastErrorAt: now, finishedAt: now, leaseOwner: null, leaseExpiresAt: null } });
-      } else {
-        const result = await this.prisma.job.updateMany({ where: { id: job.id, status: 'RUNNING' }, data: { status: 'PENDING', lastErrorCode: 'LEASE_EXPIRED', lastErrorAt: now, leaseOwner: null, leaseExpiresAt: null, pushedAt: null } });
-        recovered += result.count;
-      }
-    }
-    return recovered;
+    const rows = await this.prisma.$queryRaw<{ status: string }[]>(Prisma.sql`
+      UPDATE jobs
+      SET status = CASE WHEN attempts >= max_attempts THEN 'FAILED'::"JobStatus" ELSE 'PENDING'::"JobStatus" END,
+          finished_at = CASE WHEN attempts >= max_attempts THEN ${now} ELSE finished_at END,
+          last_error_code = 'LEASE_EXPIRED', last_error_at = ${now},
+          lease_owner = NULL, lease_expires_at = NULL, pushed_at = NULL, updated_at = ${now}
+      WHERE status = 'RUNNING' AND lease_expires_at < ${now}
+      RETURNING status
+    `);
+    return rows.filter((row) => row.status === 'PENDING').length;
   }
 
   async cancel(client: JobWriter, dedupeKey: string): Promise<boolean> {
