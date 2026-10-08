@@ -1,0 +1,52 @@
+{
+  "branch": "claude/great-ptolemy-ro6mqe",
+  "pullRequest": {
+    "number": 26,
+    "url": "https://github.com/shaghab/Raaye/pull/26",
+    "base": "main",
+    "closes": [
+      9,
+      15,
+      19
+    ]
+  },
+  "reviewRequests": [
+    {
+      "round": 1,
+      "headSha": "e4de1b3",
+      "requestedAt": "2026-10-08T06:45:34.893012+00:00",
+      "status": "completed",
+      "trigger": "pull request opened (Codex reviews new pull requests automatically)",
+      "reviewedAt": "2026-10-08T06:48:29Z",
+      "findings": 1,
+      "outcome": "P2 (a read receipt that superseded a failure report left the failure error code on the message, a consequence of this change) fixed in e85c60c"
+    },
+    {
+      "round": 2,
+      "headSha": "e85c60c",
+      "status": "completed",
+      "trigger": "@codex review comment",
+      "requestedAt": "2026-10-08T06:56:08Z",
+      "reviewedAt": "2026-10-08T06:59:26Z",
+      "findings": 0,
+      "outcome": "No findings (\"Didn't find any major issues\", comment 6054380202)"
+    }
+  ],
+  "processedFindings": [
+    {
+      "commentId": 4215802994,
+      "threadId": "PRRT_kwDOU--Sjc6qPIOJ",
+      "priority": "P2",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Clear the stale error when delivery evidence wins",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "e85c60c",
+      "resolved": true,
+      "replyCommentId": 4215871995
+    }
+  ],
+  "issues": [],
+  "blockers": [],
+  "updatedAt": "2026-10-08T07:01:57.828047+00:00"
+}

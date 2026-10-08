@@ -901,6 +901,7 @@ model Answer {
   currentRevisionNumber Int       @map("current_revision_number")
   currentProviderAt     DateTime? @map("current_provider_at") @db.Timestamptz(6)
   currentReceivedAt     DateTime  @map("current_received_at") @db.Timestamptz(6)
+  currentIngressSequence BigInt?  @map("current_ingress_sequence")
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 

@@ -34,7 +34,12 @@ export interface CreateMessageInput {
   dueAt?: Date;
 }
 
-const DELIVERY_RANK: Record<string, number> = { QUEUED: 0, ACCEPTED: 1, SENT: 2, DELIVERED: 3, READ: 4 };
+/**
+ * A failure report outranks the states that precede delivery (a message can be sent and then fail
+ * to reach the recipient) and is itself outranked by delivery evidence, so callbacks that arrive
+ * in any order settle on the same state.
+ */
+const DELIVERY_RANK: Record<string, number> = { QUEUED: 0, ACCEPTED: 1, SENT: 2, FAILED: 2.5, DELIVERED: 3, READ: 4 };
 
 /** Delivery states that a callback of the given rank must never overwrite (unranked states such as UNKNOWN stay promotable). */
 function statesRankedAtLeast(rank: number): DeliveryState[] {
@@ -327,19 +332,29 @@ export class DeliveryService implements JobHandler {
    * SENT) cannot overwrite a higher state.
    */
   async applyStatus(tx: TenantTx, messageId: string, status: NormalizedStatus): Promise<void> {
+    const newRank = DELIVERY_RANK[status.status] ?? 0;
     if (status.status === 'FAILED') {
       const changed = await tx.message.updateMany({
-        where: { id: messageId, deliveryState: { notIn: statesRankedAtLeast(DELIVERY_RANK['DELIVERED']) } },
+        where: { id: messageId, deliveryState: { notIn: statesRankedAtLeast(newRank) } },
         data: { deliveryState: 'FAILED', lastErrorCode: status.errorCode ?? 'PROVIDER_FAILED', lastStatusAt: status.providerAt },
       });
       if (changed.count === 1) await this.markInvitation(tx, messageId, 'FAILED', status.errorCode ?? 'PROVIDER_FAILED');
       return;
     }
-    const newRank = DELIVERY_RANK[status.status] ?? 0;
-    await tx.message.updateMany({
+    // Delivery evidence that outranks an earlier failure report supersedes it, error code included:
+    // the message and its invitation settle on the same state in one transaction, so a recipient is
+    // never shown as delivered next to a provider error or counted as both delivered and failed,
+    // whichever order the two callbacks were applied in. The status events keep the failure's history.
+    const supersedesFailure = newRank > DELIVERY_RANK['FAILED'];
+    const promoted = await tx.message.updateMany({
       where: { id: messageId, deliveryState: { notIn: statesRankedAtLeast(newRank) } },
-      data: { deliveryState: status.status as DeliveryState, lastStatusAt: status.providerAt },
+      data: supersedesFailure
+        ? { deliveryState: status.status as DeliveryState, lastStatusAt: status.providerAt, lastErrorCode: null }
+        : { deliveryState: status.status as DeliveryState, lastStatusAt: status.providerAt },
     });
+    if (promoted.count === 1 && supersedesFailure) {
+      await tx.invitation.updateMany({ where: { messageId, state: 'FAILED' }, data: { state: 'ACCEPTED', stateReason: null } });
+    }
   }
 
   /**

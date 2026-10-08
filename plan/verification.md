@@ -249,3 +249,27 @@ Not run: live Meta and GCP verification remain external as before.
 | 8 | c620e72 | No findings. |
 
 All eleven review threads are resolved. On c620e72: `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 80, integration 14 suites / 90 tests, WhatsApp assets 8 checks, production builds) and `pnpm test:e2e` passed (9 journeys). The commits that record the review state change only `plan/` files and were not sent for a further round.
+
+## Follow-up: service window, reply ordering, delivery consistency (issues #9, #15, #19)
+
+Branch restarted from the merged `main` (42d414c). Checks run on the working tree that became this pull request:
+
+| Check | Result |
+| --- | --- |
+| `pnpm verify` | passed: lint 7 projects, strict typecheck 7 projects, unit tests 81 (contracts 4, domain 37, server 34, web 6), integration 14 suites / 93 tests, WhatsApp assets 8 checks, production builds (api, worker, web) |
+| `pnpm test:e2e` | passed: 9 Playwright journeys (the development database carries migration `20261008050000_answer_ingress_sequence`, applied with `pnpm db:migrate` before the run) |
+| New unit coverage | `libs/domain/src/lib/__tests__/edit-window.spec.ts` "breaks equal provider timestamps by the order of arrival before the receipt time": one batch's tie decided by the inbox position, the position outranking a later receipt time, a clearly newer provider timestamp still winning, the receipt time deciding when a side has no position |
+| New integration coverage | `conversation.int-spec.ts` "an older inbound message processed after a newer one never closes the service window" (a HELP sent 24 hours earlier processed after a current one: the conversation keeps the newer timestamp and both replies leave; the same for an enrollment in progress and the placeholder conversation of an unknown sender); "two replies with the same provider timestamp from one batch keep the later arrival, even when processed in reverse order" (two taps in one provider second with one receipt time, the later arrival processed first: one revision, the later choice current, the answer carrying the later event's position, the earlier arrival answered as stale; the migration's backfill statement restores a cleared position from the current revision's event); `surveys-launch.int-spec.ts` "a failure report and later delivery evidence settle on one state for the message and its invitation, in any order" (failure then read: read and accepted with the error code cleared; read then failure: the same state; sent receipts around a failure: failed; concurrent failure and read: read and accepted; the dispatch summary counts three delivered and one failed and shows identical diagnostics for the first two recipients; the failure's status event is kept) |
+| Each test against its fix reverted | With `touchConversation` writing the event's timestamp unconditionally, the window test fails (timestamp moved back a day). With the position comparison removed from `isStaleReply`, the tie test fails (two revisions, the earlier arrival current). With the old ranking and no invitation restore in `applyStatus`, the status-order test fails. All three pass with the fixes. |
+| Migration | `20261008050000_answer_ingress_sequence` adds `answers.current_ingress_sequence` and backfills it from the current revision's inbound event; applied to the test database by the integration global setup and to the development database before the Playwright run. |
+
+Not run: live Meta verification remains external as before.
+
+## Review loop for pull request #26 (service window, reply ordering, delivery consistency)
+
+| Round | Commit | Outcome |
+| --- | --- | --- |
+| 1 (pull request opened) | e4de1b3 | P2: a read or delivered receipt that superseded a failure report left the failure's error code on the message, so the dispatch table showed a delivered chip next to a provider error and the diagnostics depended on callback order (a consequence of this change). e85c60c clears the projected error code in the same update; the status-order test asserts the cleared code, identical diagnostics for both orders, the dispatch rows and the retained status event. |
+| 2 | e85c60c (reviewed at b31dd72, which adds only `plan/`) | No findings. |
+
+The one review thread is resolved. On e85c60c: `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 81, integration 14 suites / 93 tests, WhatsApp assets 8 checks, production builds) and `pnpm test:e2e` passed (9 journeys). The commits that record the review state change only `plan/` files and were not sent for a further round.
