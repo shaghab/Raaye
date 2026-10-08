@@ -108,9 +108,8 @@ export class ConsentService {
           note: input.note ?? null,
         })),
       );
-      if (input.type === 'WITHDRAWN' && input.scopes.includes('SURVEY_INVITATIONS')) {
-        await cancelPendingOutreach(tx, contactId, 'CONTACT_WITHDRAWN', now);
-      }
+      // Only the withdrawn scopes lose their queued outreach: results permission alone keeps result notices.
+      if (input.type === 'WITHDRAWN') await cancelPendingOutreach(tx, contactId, 'CONTACT_WITHDRAWN', now, input.scopes);
       await this.audit.record(
         ctx,
         {

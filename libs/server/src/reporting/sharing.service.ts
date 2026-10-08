@@ -188,8 +188,9 @@ export class SharingService {
   /**
    * Revoke in-app access and stop the notices still queued: their "View results" control is
    * invalid from now on, so sending them would only mislead. WhatsApp text already delivered
-   * cannot be retracted by Raaye, and a notice a worker is handing over right now is refused by
-   * the send policy, which rechecks the snapshot.
+   * cannot be retracted by Raaye. A notice a worker is handing over right now holds a share lock
+   * on the snapshot, so this revocation waits for that hand-off and the policy recheck inside the
+   * hand-off sees a revocation that committed first.
    */
   async revoke(ctx: TenantContext, surveyId: string): Promise<ResultSharingDto> {
     if (ctx.role !== 'ADMIN') throw forbidden('Only Admins can revoke shared results');
@@ -199,6 +200,8 @@ export class SharingService {
     const snapshot = await db.resultSnapshot.findUnique({ where: { organizationId_runId: { organizationId: ctx.organizationId, runId: run.id } } });
     if (!snapshot) throw notFound('Result snapshot');
     await db.$transaction(async (tx) => {
+      // Serialized with every hand-off of this snapshot's messages, which hold a share lock on the row.
+      await tx.$queryRaw`SELECT id FROM result_snapshots WHERE id = ${snapshot.id}::uuid AND organization_id = ${ctx.organizationId}::uuid FOR UPDATE`;
       const now = this.clock.now();
       await tx.resultSnapshot.update({ where: { id: snapshot.id }, data: { revokedAt: now, revokedByUserId: ctx.userId, broadcastState: 'REVOKED' } });
       await tx.actionBinding.updateMany({ where: { snapshotId: snapshot.id, expiresAt: { gt: now } }, data: { expiresAt: now } });

@@ -27,16 +27,29 @@ export async function cancelPendingMessages(tx: TenantTx, where: Prisma.MessageW
   return { messageIds, jobs: jobs.count };
 }
 
-/** Cancel every pending proactive message, its job and open invitations for a contact. */
-export async function cancelPendingOutreach(tx: TenantTx, contactId: string, reason: string, now: Date): Promise<CancellationResult> {
-  const { messageIds, jobs } = await cancelPendingMessages(tx, { contactId, kind: { not: 'OPT_OUT_ACK' } }, reason, now);
-  if (messageIds.length > 0) {
+export type WithdrawnScope = 'SURVEY_INVITATIONS' | 'SURVEY_RESULTS';
+const RESULTS_KINDS = ['RESULTS_INVITATION', 'RESULTS_CONTENT'] as const;
+
+/**
+ * Cancel every pending proactive message, its job and open invitations for a contact, for the
+ * permission scopes that were withdrawn (both by default: archive, phone change, STOP). The two
+ * scopes are independent: withdrawing survey invitations alone leaves result notices, result
+ * content and their View results controls untouched, and withdrawing results alone touches only
+ * those.
+ */
+export async function cancelPendingOutreach(tx: TenantTx, contactId: string, reason: string, now: Date, scopes: readonly WithdrawnScope[] = ['SURVEY_INVITATIONS', 'SURVEY_RESULTS']): Promise<CancellationResult> {
+  const invitations = scopes.includes('SURVEY_INVITATIONS');
+  const results = scopes.includes('SURVEY_RESULTS');
+  if (!invitations && !results) return { messages: 0, jobs: 0, invitations: 0 };
+  const kind: Prisma.MessageWhereInput['kind'] = invitations && results ? { not: 'OPT_OUT_ACK' } : invitations ? { notIn: ['OPT_OUT_ACK', ...RESULTS_KINDS] } : { in: [...RESULTS_KINDS] };
+  const { messageIds, jobs } = await cancelPendingMessages(tx, { contactId, kind }, reason, now);
+  if (results && messageIds.length > 0) {
     await tx.resultRecipient.updateMany({ where: { invitationMessageId: { in: messageIds }, accessState: { in: ['PENDING', 'INVITED'] } }, data: { accessState: 'SUPPRESSED', suppressionReason: reason } });
   }
-  const invitations = await tx.invitation.updateMany({
-    where: { contactId, state: { in: ['PENDING', 'QUEUED'] } },
-    data: { state: 'CANCELED', stateReason: reason },
-  });
-  await tx.actionBinding.updateMany({ where: { contactId, expiresAt: { gt: now } }, data: { expiresAt: now } });
-  return { messages: messageIds.length, jobs, invitations: invitations.count };
+  const canceledInvitations = invitations
+    ? await tx.invitation.updateMany({ where: { contactId, state: { in: ['PENDING', 'QUEUED'] } }, data: { state: 'CANCELED', stateReason: reason } })
+    : { count: 0 };
+  const purpose: Prisma.ActionBindingWhereInput['purpose'] = invitations && results ? undefined : invitations ? { not: 'VIEW_RESULTS' } : 'VIEW_RESULTS';
+  await tx.actionBinding.updateMany({ where: { contactId, expiresAt: { gt: now }, purpose }, data: { expiresAt: now } });
+  return { messages: messageIds.length, jobs, invitations: canceledInvitations.count };
 }

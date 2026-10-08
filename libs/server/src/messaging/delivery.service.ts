@@ -189,8 +189,12 @@ export class DeliveryService implements JobHandler {
         await tx.$queryRaw`SELECT id FROM contacts WHERE id = ${message.contactId}::uuid AND organization_id = ${organizationId}::uuid FOR UPDATE`;
         // The lock may have been waited for: deadlines are judged on the clock as of this moment.
         const handoffAt = this.clock.now();
-        const fresh = await tx.message.findUnique({ where: { id: message.id }, include: { contact: true, connection: true, run: true, snapshot: { select: { revokedAt: true } } } });
+        const fresh = await tx.message.findUnique({ where: { id: message.id }, include: { contact: true, connection: true, run: true } });
         const conversation = await tx.conversation.findUnique({ where: { organizationId_contactId: { organizationId, contactId: message.contactId } } });
+        // A results message leaves under a share lock on its snapshot: a revocation takes the
+        // exclusive lock, so it either committed before this read (the message is refused here)
+        // or waits until this hand-off has committed, when the notice is already out of our hands.
+        const snapshotRevoked = message.snapshotId ? await this.snapshotRevokedUnderLock(tx, message.snapshotId) : false;
         const decision: PolicyDecision =
           !fresh || fresh.state !== 'SENDING'
             ? { allowed: false, reason: 'CANCELED_BEFORE_SEND' }
@@ -209,7 +213,7 @@ export class DeliveryService implements JobHandler {
                 needsFlow: rendered.type === 'flow',
                 priorUnknownAttempts: 0,
                 priorAcceptedAttempts: 0,
-                snapshotRevoked: Boolean(fresh.snapshot?.revokedAt),
+                snapshotRevoked,
               });
         if (!decision.allowed) {
           await tx.messageAttempt.update({ where: { id: attempt.id }, data: { outcome: 'FAILED', finishedAt: this.clock.now(), errorCode: decision.reason, retryable: false } });
@@ -401,10 +405,21 @@ export class DeliveryService implements JobHandler {
     return null;
   }
 
-  /** Reflect a message outcome on the invitation it carries and, for a results notice, on the recipient row reporting reads. */
+  private async snapshotRevokedUnderLock(tx: TenantTx, snapshotId: string): Promise<boolean> {
+    const rows = await tx.$queryRaw<{ revoked_at: Date | null }[]>`SELECT revoked_at FROM result_snapshots WHERE id = ${snapshotId}::uuid FOR SHARE`;
+    return Boolean(rows[0]?.revoked_at);
+  }
+
+  /**
+   * Reflect a message outcome on the invitation it carries and, for a results notice, on the
+   * recipient row reporting reads. An accepted send (a retry included) makes the recipient
+   * invited again; a recipient who already viewed the results is never moved back.
+   */
   private async markInvitation(tx: TenantTx, messageId: string, state: 'ACCEPTED' | 'FAILED' | 'UNKNOWN' | 'SUPPRESSED', reason: string | null): Promise<void> {
     await tx.invitation.updateMany({ where: { messageId }, data: { state, stateReason: reason } });
-    if (state !== 'ACCEPTED') {
+    if (state === 'ACCEPTED') {
+      await tx.resultRecipient.updateMany({ where: { invitationMessageId: messageId, accessState: { in: ['PENDING', 'SUPPRESSED', 'FAILED', 'UNKNOWN'] } }, data: { accessState: 'INVITED', suppressionReason: null } });
+    } else {
       await tx.resultRecipient.updateMany({ where: { invitationMessageId: messageId, accessState: { in: ['PENDING', 'INVITED'] } }, data: { accessState: state, suppressionReason: reason } });
     }
   }
