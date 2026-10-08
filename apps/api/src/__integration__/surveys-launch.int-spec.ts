@@ -404,6 +404,66 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     }
   });
 
+  /** Hold the survey row from another transaction until `release` is called, as a launch, an edit or an archive would. */
+  async function holdSurvey(surveyId: string): Promise<{ release: () => void; held: Promise<void> }> {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const held = t.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM surveys WHERE id = ${surveyId}::uuid FOR UPDATE`;
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+    for (let i = 0; i < 300; i += 1) {
+      const free = await t.prisma.$queryRaw<{ id: string }[]>`SELECT id FROM surveys WHERE id = ${surveyId}::uuid FOR UPDATE SKIP LOCKED`;
+      if (free.length === 0) break;
+      await sleep(10);
+    }
+    return { release, held };
+  }
+
+  /** Wait until `count` backends of this database are waiting on a lock. */
+  async function untilLockWaiters(count: number): Promise<void> {
+    for (let i = 0; i < 300; i += 1) {
+      const [row] = await t.prisma.$queryRaw<{ waiting: number }[]>`SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+      if ((row?.waiting ?? 0) >= count) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
+  it('concurrent launch retries with the same idempotency key both receive the launch (R24)', async () => {
+    const id = await createSurvey('Double click', { audience: { mode: 'SELECTED', contactIds: [contacts['Ayesha']] } });
+    // Both requests pass the key lookup and their validation while the row is held, then queue on it: the second
+    // finds the survey launched by its twin.
+    const { release, held } = await holdSurvey(id);
+    const launch = () => request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).set('Idempotency-Key', 'double-click').send({ mode: 'NOW' }).then((response) => response);
+    const first = launch();
+    await untilLockWaiters(1);
+    const second = launch();
+    await untilLockWaiters(2);
+    release();
+    await held;
+    const responses = await Promise.all([first, second]);
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(responses[1].body.liveRun.id).toBe(responses[0].body.liveRun.id);
+    expect(responses[1].body.state).toBe('ACTIVE');
+    expect(await t.prisma.surveyRun.count({ where: { surveyId: id, kind: 'LIVE' } })).toBe(1);
+    expect(await t.prisma.idempotencyKey.count({ where: { organizationId: orgId, scope: `launch:${id}`, key: 'double-click' } })).toBe(1);
+    // The same key with a different request, another key and no key keep their own answers.
+    const conflict = await request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).set('Idempotency-Key', 'double-click').send({ mode: 'SCHEDULED', opensAt: '2026-10-11T09:00:00Z' }).expect(409);
+    expect(conflict.body.code).toBe('IDEMPOTENCY_CONFLICT');
+    const other = await request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).set('Idempotency-Key', 'another-key').send({ mode: 'NOW' }).expect(409);
+    expect(other.body.code).toBe('SURVEY_STATE_INVALID');
+    const bare = await request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).send({ mode: 'NOW' }).expect(409);
+    expect(bare.body.code).toBe('SURVEY_STATE_INVALID');
+    await drainJobs(t);
+    await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
+  });
+
   it('archiving cancels an active test run and its queued test sends (R30, R55)', async () => {
     await drainJobs(t);
     const id = await createSurvey('Archived with test run', { audience: { mode: 'SELECTED', contactIds: [contacts['Ehsan']] } });

@@ -16,7 +16,7 @@ import { isUniqueViolation } from '../persistence/db-errors';
 import { asJson } from '../persistence/json';
 import type { SurveyRun } from '../persistence/prisma.service';
 import { TenantDbFactory } from '../persistence/tenant-db.factory';
-import type { TenantTx } from '../persistence/tenant-db';
+import type { TenantDb, TenantTx } from '../persistence/tenant-db';
 import { AudienceService } from './audience.service';
 import { revisionInclude, type RevisionWithQuestions } from './survey-mapper';
 import { SurveysService, flowsNeeded } from './surveys.service';
@@ -52,13 +52,27 @@ export class LaunchService {
     if (ctx.role === 'VIEWER') throw forbidden();
     const db = this.dbFactory.for(ctx);
     const requestHash = createHash('sha256').update(JSON.stringify({ surveyId, ...input })).digest('hex');
-    if (idempotencyKey) {
-      const existing = await db.idempotencyKey.findUnique({ where: { organizationId_scope_key: { organizationId: ctx.organizationId, scope: `launch:${surveyId}`, key: idempotencyKey } } });
-      if (existing) {
-        if (existing.requestHash !== requestHash) throw new DomainError('IDEMPOTENCY_CONFLICT', 'This Idempotency-Key was already used with a different request');
-        return this.surveys.get(ctx, surveyId);
-      }
+    const committedLaunch = async () => (idempotencyKey ? db.idempotencyKey.findUnique({ where: { organizationId_scope_key: { organizationId: ctx.organizationId, scope: `launch:${surveyId}`, key: idempotencyKey } } }) : null);
+    const replay = (stored: { requestHash: string }) => {
+      if (stored.requestHash !== requestHash) throw new DomainError('IDEMPOTENCY_CONFLICT', 'This Idempotency-Key was already used with a different request');
+      return this.surveys.get(ctx, surveyId);
+    };
+    const existing = await committedLaunch();
+    if (existing) return replay(existing);
+    try {
+      return await this.launchDraft(ctx, db, surveyId, input, idempotencyKey, requestHash);
+    } catch (error) {
+      // A retry of a launch that committed meanwhile (a double click racing a slow network): the
+      // state guards or the unique constraints refused it only because its twin had already
+      // succeeded, so it receives the answer the twin received instead of an error.
+      const twin = await committedLaunch();
+      if (twin) return replay(twin);
+      if (isUniqueViolation(error, 'live_slot') || isUniqueViolation(error, 'idempotency')) return this.surveys.get(ctx, surveyId);
+      throw error;
     }
+  }
+
+  private async launchDraft(ctx: TenantContext, db: TenantDb, surveyId: string, input: LaunchRequest, idempotencyKey: string | null, requestHash: string): Promise<SurveyDetailDto> {
     const survey = await this.surveys.load(db, surveyId);
     if (survey.archivedAt) throw new DomainError('SURVEY_STATE_INVALID', 'Archived surveys cannot be launched');
     if (survey.state !== 'DRAFT') throw new DomainError('SURVEY_STATE_INVALID', `Only a draft can be launched (current state: ${survey.state})`);
@@ -79,50 +93,43 @@ export class LaunchService {
     const resolved = await this.audience.resolve(ctx, revision.audienceDefinition as Parameters<AudienceService['resolve']>[1]);
     if (resolved.summary.eligible === 0) throw new DomainError('AUDIENCE_EMPTY', 'No currently eligible recipients; review consent and audience selection', { summary: resolved.summary });
     const connectionId = readiness.connection.id;
-    try {
-      await db.$transaction(async (tx) => {
-        // Serialized with archive on the survey row: an archive that commits first fails this guard.
-        await tx.$queryRaw`SELECT id FROM surveys WHERE id = ${survey.id}::uuid AND organization_id = ${ctx.organizationId}::uuid FOR UPDATE`;
-        // Everything validated above was read before the lock: refuse to freeze a revision that an
-        // edit changed in between (edits bump the revision's updatedAt or install a new revision).
-        const fresh = await tx.survey.findUnique({ where: { id: survey.id }, select: { currentRevisionNumber: true, revisions: { where: { id: revision.id }, select: { updatedAt: true } } } });
-        if (!fresh || fresh.currentRevisionNumber !== survey.currentRevisionNumber || fresh.revisions[0]?.updatedAt.getTime() !== revision.updatedAt.getTime()) {
-          throw new DomainError('SURVEY_STATE_INVALID', 'The survey was edited while it was being launched; review it and launch again');
-        }
-        const guard = await tx.survey.updateMany({ where: { id: survey.id, state: 'DRAFT', archivedAt: null }, data: { state: input.mode === 'NOW' ? 'ACTIVE' : 'SCHEDULED' } });
-        if (guard.count !== 1) throw new DomainError('SURVEY_STATE_INVALID', 'The survey was launched or archived concurrently');
-        await tx.surveyRevision.update({ where: { id: revision.id }, data: { frozenAt: now, scheduledOpensAt: opensAt, rendererPlan: asJson(revision.questions.map((question) => ({ questionId: question.id, renderer: question.renderer }))) } });
-        const run = await tx.surveyRun.create({
-          data: {
-            organizationId: ctx.organizationId,
-            surveyId: survey.id,
-            revisionId: revision.id,
-            kind: 'LIVE',
-            liveSlot: 1,
-            state: input.mode === 'NOW' ? 'ACTIVE' : 'SCHEDULED',
-            opensAt,
-            closesAt,
-            activatedAt: input.mode === 'NOW' ? now : null,
-            audienceDefinition: asJson(revision.audienceDefinition),
-            audienceSummary: asJson(resolved.summary),
-            launchIdempotencyKey: idempotencyKey,
-            launchedByUserId: ctx.userId,
-          },
-        });
-        await this.createRecipients(tx, ctx.organizationId, run.id, resolved.recipients);
-        await this.jobs.enqueue(tx, { organizationId: ctx.organizationId, kind: 'ACTIVATE_SURVEY', entityId: run.id, dedupeKey: `activate:${run.id}`, dueAt: opensAt, priority: JOB_PRIORITY.lifecycle, maxAttempts: 20 });
-        await this.jobs.enqueue(tx, { organizationId: ctx.organizationId, kind: 'CLOSE_SURVEY', entityId: run.id, dedupeKey: `close:${run.id}`, dueAt: closesAt, priority: JOB_PRIORITY.lifecycle, maxAttempts: 20 });
-        if (idempotencyKey) {
-          await tx.idempotencyKey.create({ data: { organizationId: ctx.organizationId, scope: `launch:${surveyId}`, key: idempotencyKey, requestHash, responseStatus: 200 } });
-        }
-        await this.audit.record(ctx, { action: input.mode === 'NOW' ? 'survey.launched' : 'survey.scheduled', resourceType: 'survey', resourceId: survey.id, metadata: { runId: run.id, opensAt: opensAt.toISOString(), closesAt: closesAt.toISOString(), selected: resolved.summary.selected, eligible: resolved.summary.eligible, connectionId } }, tx);
-      });
-    } catch (error) {
-      if (isUniqueViolation(error, 'live_slot') || isUniqueViolation(error, 'idempotency')) {
-        return this.surveys.get(ctx, surveyId);
+    await db.$transaction(async (tx) => {
+      // Serialized with archive on the survey row: an archive that commits first fails this guard.
+      await tx.$queryRaw`SELECT id FROM surveys WHERE id = ${survey.id}::uuid AND organization_id = ${ctx.organizationId}::uuid FOR UPDATE`;
+      // Everything validated above was read before the lock: refuse to freeze a revision that an
+      // edit changed in between (edits bump the revision's updatedAt or install a new revision).
+      const fresh = await tx.survey.findUnique({ where: { id: survey.id }, select: { currentRevisionNumber: true, revisions: { where: { id: revision.id }, select: { updatedAt: true } } } });
+      if (!fresh || fresh.currentRevisionNumber !== survey.currentRevisionNumber || fresh.revisions[0]?.updatedAt.getTime() !== revision.updatedAt.getTime()) {
+        throw new DomainError('SURVEY_STATE_INVALID', 'The survey was edited while it was being launched; review it and launch again');
       }
-      throw error;
-    }
+      const guard = await tx.survey.updateMany({ where: { id: survey.id, state: 'DRAFT', archivedAt: null }, data: { state: input.mode === 'NOW' ? 'ACTIVE' : 'SCHEDULED' } });
+      if (guard.count !== 1) throw new DomainError('SURVEY_STATE_INVALID', 'The survey was launched or archived concurrently');
+      await tx.surveyRevision.update({ where: { id: revision.id }, data: { frozenAt: now, scheduledOpensAt: opensAt, rendererPlan: asJson(revision.questions.map((question) => ({ questionId: question.id, renderer: question.renderer }))) } });
+      const run = await tx.surveyRun.create({
+        data: {
+          organizationId: ctx.organizationId,
+          surveyId: survey.id,
+          revisionId: revision.id,
+          kind: 'LIVE',
+          liveSlot: 1,
+          state: input.mode === 'NOW' ? 'ACTIVE' : 'SCHEDULED',
+          opensAt,
+          closesAt,
+          activatedAt: input.mode === 'NOW' ? now : null,
+          audienceDefinition: asJson(revision.audienceDefinition),
+          audienceSummary: asJson(resolved.summary),
+          launchIdempotencyKey: idempotencyKey,
+          launchedByUserId: ctx.userId,
+        },
+      });
+      await this.createRecipients(tx, ctx.organizationId, run.id, resolved.recipients);
+      await this.jobs.enqueue(tx, { organizationId: ctx.organizationId, kind: 'ACTIVATE_SURVEY', entityId: run.id, dedupeKey: `activate:${run.id}`, dueAt: opensAt, priority: JOB_PRIORITY.lifecycle, maxAttempts: 20 });
+      await this.jobs.enqueue(tx, { organizationId: ctx.organizationId, kind: 'CLOSE_SURVEY', entityId: run.id, dedupeKey: `close:${run.id}`, dueAt: closesAt, priority: JOB_PRIORITY.lifecycle, maxAttempts: 20 });
+      if (idempotencyKey) {
+        await tx.idempotencyKey.create({ data: { organizationId: ctx.organizationId, scope: `launch:${surveyId}`, key: idempotencyKey, requestHash, responseStatus: 200 } });
+      }
+      await this.audit.record(ctx, { action: input.mode === 'NOW' ? 'survey.launched' : 'survey.scheduled', resourceType: 'survey', resourceId: survey.id, metadata: { runId: run.id, opensAt: opensAt.toISOString(), closesAt: closesAt.toISOString(), selected: resolved.summary.selected, eligible: resolved.summary.eligible, connectionId } }, tx);
+    });
     return this.surveys.get(ctx, surveyId);
   }
 
