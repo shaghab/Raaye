@@ -276,8 +276,12 @@ export interface ImportBatchDto {
   duplicateMode: DuplicateMode;
   state: ImportState;
   summary: ImportSummaryDto | null;
+  /** Processing stopped (crash or failure) and the staged rows are still within their retention window: confirming again continues it. */
+  resumable: boolean;
   hasConsentAttestation: boolean;
   rawExpiresAt: string;
+  /** When the retention sweep deleted the staged rows (error report and resume are gone from then on). */
+  stagingPurgedAt: string | null;
   previewedAt: string | null;
   confirmedAt: string | null;
   completedAt: string | null;

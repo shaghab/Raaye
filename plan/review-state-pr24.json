@@ -1,0 +1,94 @@
+{
+  "branch": "claude/great-ptolemy-ro6mqe",
+  "pullRequest": {
+    "number": 24,
+    "url": "https://github.com/shaghab/Raaye/pull/24",
+    "base": "main",
+    "closes": [
+      4,
+      14,
+      5,
+      6
+    ]
+  },
+  "reviewRequests": [
+    {
+      "round": 1,
+      "headSha": "5e67cfe",
+      "requestedAt": "2026-10-07T19:27:25.897455+00:00",
+      "status": "completed",
+      "trigger": "pull request opened (Codex reviews new pull requests automatically)",
+      "reviewedAt": "2026-10-07T19:30:21Z",
+      "findings": 3,
+      "outcome": "2 P1 (staged rows of failed batches never purged; legacy in-flight rows re-applied) and 1 P2 (false failure after a concurrent completion, a defect of this change) fixed in e653148"
+    },
+    {
+      "round": 2,
+      "headSha": "e653148",
+      "requestedAt": "2026-10-07T19:58:00+00:00",
+      "status": "completed",
+      "trigger": "@codex review comment 6045550145",
+      "reviewedAt": "2026-10-07T19:50:13Z",
+      "findings": 1,
+      "outcome": "P1: the backfill missed legacy UPDATE rows whose contact a later import touched; fixed in dc9916a (durable-evidence classification, undeterminable rows refused)"
+    },
+    {
+      "round": 3,
+      "headSha": "a4b2c3f",
+      "status": "completed",
+      "trigger": "@codex review comment",
+      "reviewedAt": "2026-10-07T20:04:37Z",
+      "findings": 0,
+      "outcome": "No findings (\"Didn't find any major issues\")"
+    }
+  ],
+  "processedFindings": [
+    {
+      "commentId": 4211097550,
+      "threadId": "PRRT_kwDOU--Sjc6qEBWT",
+      "priority": "P1",
+      "file": "libs/server/src/contacts/import.service.ts",
+      "title": "Keep failed staging eligible for expiry cleanup",
+      "action": "fixed",
+      "commit": "e653148",
+      "resolved": true,
+      "replyCommentId": 4211245388
+    },
+    {
+      "commentId": 4211097562,
+      "threadId": "PRRT_kwDOU--Sjc6qEBWd",
+      "priority": "P1",
+      "file": "prisma/migrations/20261007170000_import_row_applied_at/migration.sql",
+      "title": "Migrate in-flight rows before enabling resume",
+      "action": "fixed",
+      "commit": "e653148",
+      "resolved": true,
+      "replyCommentId": 4211245963
+    },
+    {
+      "commentId": 4211097571,
+      "threadId": "PRRT_kwDOU--Sjc6qEBWi",
+      "priority": "P2",
+      "file": "libs/server/src/contacts/import.service.ts",
+      "title": "Verify the failure transition before reporting failure",
+      "action": "fixed",
+      "reason": "defect introduced by this pull request",
+      "commit": "e653148",
+      "resolved": true,
+      "replyCommentId": 4211246501
+    },
+    {
+      "commentId": 4211284557,
+      "threadId": "PRRT_kwDOU--Sjc6qEeWZ",
+      "priority": "P1",
+      "file": "prisma/migrations/20261007170000_import_row_applied_at/migration.sql",
+      "title": "Backfill legacy updates even after a later import",
+      "action": "fixed",
+      "commit": "dc9916a",
+      "resolved": true
+    }
+  ],
+  "issues": [],
+  "blockers": [],
+  "updatedAt": "2026-10-07T20:05:36.398012+00:00"
+}

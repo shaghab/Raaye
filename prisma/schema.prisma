@@ -1360,6 +1360,8 @@ model ImportRow {
   errors         Json?
   normalized     Json?
   contactId      String?         @map("contact_id") @db.Uuid
+  /** When the planned CREATE/UPDATE was applied (or turned into SKIP/ERROR); null while still pending. */
+  appliedAt      DateTime?       @map("applied_at") @db.Timestamptz(6)
 
   organization Organization @relation(fields: [organizationId], references: [id])
   batch        ImportBatch  @relation(fields: [organizationId, batchId], references: [organizationId, id])

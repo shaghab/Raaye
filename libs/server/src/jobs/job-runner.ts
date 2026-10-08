@@ -20,6 +20,8 @@ const NON_RETRYABLE_DOMAIN_CODES = new Set([
   'ACTION_INVALID',
 ]);
 
+export type JobOutcome = 'DONE' | 'RETRY' | 'FAILED' | 'LOST';
+
 @Injectable()
 export class JobRunner {
   private readonly logger = getLogger('jobs');
@@ -58,28 +60,31 @@ export class JobRunner {
   }
 
   /** Execute a specific job id (Cloud Tasks delivery or tests). */
-  async runJob(jobId: string): Promise<'DONE' | 'RETRY' | 'FAILED' | 'NOT_CLAIMABLE'> {
+  async runJob(jobId: string): Promise<JobOutcome | 'NOT_CLAIMABLE'> {
     const job = await this.jobs.claimOne(jobId);
     if (!job) return 'NOT_CLAIMABLE';
     return this.execute(job);
   }
 
-  async execute(job: ClaimedJob): Promise<'DONE' | 'RETRY' | 'FAILED'> {
+  /**
+   * Run the handler and record the outcome under the claim's lease. 'LOST' means the lease expired
+   * and was reclaimed before the outcome could be recorded: the other claim owns the job now.
+   */
+  async execute(job: ClaimedJob): Promise<JobOutcome> {
     const handler = this.handlers.get(job.kind);
     this.inFlight += 1;
     try {
       return await runWithContext({ correlationId: randomUUID(), jobId: job.id, organizationId: job.organizationId }, async () => {
         if (!handler) {
           this.logger.error({ kind: job.kind }, 'No handler registered for job kind');
-          await this.jobs.fail(job, 'NO_HANDLER', false);
-          return 'FAILED';
+          return this.jobs.fail(job, 'NO_HANDLER', false);
         }
         const started = Date.now();
         try {
           await handler.handle(job, { organizationId: job.organizationId, correlationId: job.id, actor: 'SYSTEM' });
-          await this.jobs.complete(job.id);
-          this.logger.debug({ kind: job.kind, ms: Date.now() - started, attempt: job.attempts }, 'Job succeeded');
-          return 'DONE';
+          const outcome = await this.jobs.complete(job);
+          if (outcome === 'DONE') this.logger.debug({ kind: job.kind, ms: Date.now() - started, attempt: job.attempts }, 'Job succeeded');
+          return outcome;
         } catch (error) {
           const { code, retryable } = classify(error);
           const outcome = await this.jobs.fail(job, code, retryable);

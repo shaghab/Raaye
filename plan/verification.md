@@ -24,12 +24,13 @@ What actually ran for this build, with outcomes. Environment: Linux sandbox, Nod
 | --- | --- | --- |
 | `auth-membership.int-spec.ts` | 6 | token verification, membership resolution, role matrix, invitations, last-admin protection including concurrent downgrade/revoke requests, revocation (R03-R06, R09) |
 | `tenant-constraints.int-spec.ts` | 3 | composite foreign keys and unique constraints, scoped client refusing foreign organizations (R07, R08) |
-| `contacts.int-spec.ts` | 8 | contact CRUD, same phone in two organizations, consent evidence and withdrawal, groups/tags, CSV/XLSX import with attestation and invalid rows, export neutralization (R10-R14, R50) |
-| `surveys-launch.int-spec.ts` | 11 | authoring validation, audience freeze, launch idempotency, scheduling, unschedule, activation/closing jobs, STOP cancelling queued sends, ambiguous send and explicit retry (R15, R21, R23-R29, R43) |
+| `contacts.int-spec.ts` | 15 | contact CRUD, same phone in two organizations, consent evidence and withdrawal, groups/tags, CSV/XLSX import with attestation and invalid rows, interrupted import resumed exactly once per row, crashed/expired/purged imports, rows applied before the marker existed, the migration backfill run against legacy-shaped batches, concurrent runs with a failure, export neutralization (R10-R14, R50, R56) |
+| `surveys-launch.int-spec.ts` | 23 | authoring validation, audience freeze, launch idempotency, scheduling, unschedule, activation/closing jobs, STOP cancelling queued sends, ambiguous send and explicit retry, archive/launch serialization, Viewer draft visibility, status callbacks (concurrent, failed projection replayed by the retry and the sweep) (R15, R21, R23-R29, R43, R44, R55) |
 | `conversation.int-spec.ts` | 11 | Start/intro/profile offer, buttons/list/Flow answers, edit window with injected clock, multi-select validation, resume/switch between surveys, enrollment of unknown senders, STOP/HELP/EDIT commands, duplicate webhooks, signed raw webhook ingress and quarantine (R16-R20, R31-R42, R44) |
 | `reporting.int-spec.ts` | 6 | aggregates with known dataset, breakdowns on frozen profiles with threshold, Admin-only responses with audit, CSV/XLSX exports parsed and checked, result sharing snapshot/template/`View results`/revoke, retention cleanup (R06, R30, R46-R54, R56, R58) |
 | `internal.int-spec.ts` | 2 | service-identity guard, idempotent job execution and sweep routes (R55) |
 | `jobs-push.int-spec.ts` | 2 | Cloud Tasks hand-off of pending jobs, scheduled tasks, re-push after retry, rejected pushes left for the sweep, inert under the postgres driver (R55) |
+| `jobs-leases.int-spec.ts` | 3 | a reclaimed lease is not reset by recovery and the previous holder can neither complete nor fail the job; recovery of a dead worker's leases re-queues retryable jobs and fails exhausted ones; the runner reports a lost lease (R43, R55) |
 | `inbox.int-spec.ts` | 2 | inbox row and processing job commit together; duplicate delivery re-enqueues an orphaned pending row (R41, R42) |
 | `scale.int-spec.ts` | 1 | 1,000-contact launch and restart during dispatch (R59) |
 
@@ -194,3 +195,26 @@ Not run: nothing in this change touches the Meta adapter's outbound path, Cloud 
 All ten review threads are resolved. The Playwright run on 44492db failed one journey ("STOP after launch cancels pending sends ...") on both attempts: it opened `/contacts?search=Kamran`, but the contacts list never read filters from the URL, so it showed the unfiltered first page, and the "E2E Contact" rows that every run of the contacts journey adds to the long-lived development database had pushed the seeded contact onto the second page (26 names before it, 10 of them from today's runs). The API search itself answered in under 100 ms. The contacts list now seeds its search, consent, group, tag and archived filters from the URL (aed9134, keys aligned in 1ef21b4), which makes deep links work and the journey independent of accumulated data.
 
 On the tree of 7170e78: `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 75, integration 13 suites / 79 tests, WhatsApp assets 8 checks, production builds) and `pnpm test:e2e` passed (9 journeys). The commit that records this outcome changes only `plan/` files and was not sent for a further round.
+
+## Follow-up: status replay, job leases and import resume (issues #4, #14, #5, #6)
+
+Branch restarted from the merged `main` (d8f89c1). Checks run on the working tree that became this pull request:
+
+| Check | Result |
+| --- | --- |
+| `pnpm verify` | passed: lint 7 projects, strict typecheck 7 projects, unit tests 75 (contracts 4, domain 36, server 29, web 6), integration 14 suites / 85 tests, WhatsApp assets 8 checks, production builds (api, worker, web) |
+| `pnpm test:e2e` | passed: 9 Playwright journeys (auth/roles 4, bootstrap 1, contacts 2, survey end-to-end 2) |
+| Migration | `20261007170000_import_row_applied_at` applied with `prisma migrate deploy`; `prisma migrate diff` reports no drift |
+| New integration coverage | `surveys-launch.int-spec.ts` "a status whose projection failed is applied by the provider retry and by the sweep instead of being dismissed as a duplicate" (projection fails once: no event row and no state change persisted; the retry is recorded and the state promoted; a genuine duplicate still creates no second event; dispatch metrics count the delivery; an unmatched READ is linked and applied by the sweep only once both writes succeed); `jobs-leases.int-spec.ts` (3 tests, see the suites table); `contacts.int-spec.ts` "a failure during processing answers with an error, keeps the applied rows and resumes exactly once per row" (450-row file, consent write fails in the second 200-row chunk: HTTP 500 `IMPORT_PROCESSING_FAILED` with the batch id and the partial summary, 200 contacts and 200 stamped rows, 250 pending, batch `FAILED` and `resumable`; the second confirm completes with 450 contacts, every row applied once, one consent event and one group membership per contact; audit trail confirmed/failed/resumed/completed) and "an import left CONFIRMED by a crash resumes once even when confirmed concurrently, and expired rows report a clear error" (two concurrent confirms, one completion audit, three contacts; a stopped batch past its retention window answers 409 before and after the retention purge, nothing imported) |
+
+Not run: nothing in this change touches the Meta adapter's outbound path, Cloud Tasks or the Docker assets; live Meta and GCP verification remain external as before.
+
+## Review loop for pull request #24 (status replay, job leases, import resume)
+
+| Round | Commit | Outcome |
+| --- | --- | --- |
+| 1 (pull request opened) | 5e67cfe | Two P1 and one P2, all fixed in e653148: the staged rows of a failed batch were never purged because processing set the staging marker while keeping the rows (processing now drops only the raw file and the retention sweep purges the rows of every batch at the end of the window, which also bounds the error report); rows applied before the `applied_at` marker existed would have been applied again on resume (migration backfill plus runtime recognition); and a run that failed after a concurrent run completed the batch recorded a false failure (the failure transition now defers to the completion, and a run that applied every pending row completes the batch even after a concurrent failure mark). |
+| 2 | e653148 | P1: the backfill recognized an applied legacy UPDATE only while the contact still named that batch as its last import. dc9916a classifies legacy rows by durable evidence (completed batch, created contact, last import or consent evidence recorded under the batch) and refuses the in-flight UPDATE rows it cannot classify; a test runs the migration's statements against legacy-shaped batches built through the API. |
+| 3 | a4b2c3f | No findings. |
+
+All four review threads are resolved. On the tree of dc9916a (a4b2c3f adds only `plan/`): `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 75, integration 14 suites / 88 tests, WhatsApp assets 8 checks, production builds) and `pnpm test:e2e` passed (9 journeys). The commit that records this outcome changes only `plan/` files and was not sent for a further round.
