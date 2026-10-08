@@ -263,20 +263,21 @@ export class OrganizationService {
       // a re-run's active-Admin count and the membership created here cannot interleave, and both paths
       // take the organization lock before touching invitations, so they never deadlock on each other.
       await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${invitation.organizationId}::uuid FOR UPDATE`;
-      // The deadline is judged on a clock reading taken after the lock wait, so an invitation that expired
-      // while this request waited is refused and `acceptedAt` never predates the wait.
-      const now = this.clock.now();
-      const consumed = await tx.staffInvitation.updateMany({
-        where: { id: invitation.id, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
-        data: { acceptedAt: now },
-      });
-      if (consumed.count !== 1) throw new DomainError('INVITATION_INVALID', 'This invitation is no longer valid');
+      // The user row is the second wait: the same identity's acceptance for another organization holds it
+      // until that acceptance commits. Every wait therefore precedes the deadline check below, which judges
+      // the deadline on a clock reading taken afterwards: an invitation that expired while this request
+      // waited is refused, and `acceptedAt` never predates a wait.
       const user = await tx.user.upsert({
         where: { firebaseUid },
         create: { firebaseUid, email, displayName: displayName ?? null },
         update: { email, displayName: displayName ?? undefined },
       });
-      await tx.staffInvitation.update({ where: { id: invitation.id }, data: { acceptedByUserId: user.id } });
+      const now = this.clock.now();
+      const consumed = await tx.staffInvitation.updateMany({
+        where: { id: invitation.id, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
+        data: { acceptedAt: now, acceptedByUserId: user.id },
+      });
+      if (consumed.count !== 1) throw new DomainError('INVITATION_INVALID', 'This invitation is no longer valid');
       await tx.organizationMembership.upsert({
         where: { organizationId_userId: { organizationId: invitation.organizationId, userId: user.id } },
         create: { organizationId: invitation.organizationId, userId: user.id, role: invitation.role, status: 'ACTIVE' },

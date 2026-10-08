@@ -181,6 +181,57 @@ describe('authentication and membership (R04, R05)', () => {
     t.clock.advance(-73 * 3600 * 1000);
   });
 
+  it('an invitation that expires while its acceptance waits for the invitee\'s user row is refused', async () => {
+    const admin = await seedUser(t.prisma, orgId, 'ADMIN');
+    // The invitee already has an account (an identity that joined another organization before).
+    const busy = await t.prisma.user.create({ data: { firebaseUid: 'uid-busy', email: 'busy.joiner@example.org', displayName: 'Busy Joiner' } });
+    const created = await request(t.server)
+      .post('/api/v1/staff-invitations')
+      .set('Authorization', admin.authorization)
+      .send({ email: 'busy.joiner@example.org', role: 'VIEWER' })
+      .expect(201);
+    const token = new URL(created.body.acceptUrl).searchParams.get('token') ?? '';
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    // Another transaction holds the user row, as the same identity's acceptance for another organization would.
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const holder = t.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM users WHERE id = ${busy.id}::uuid FOR UPDATE`;
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+    for (let i = 0; i < 300; i += 1) {
+      const free = await t.prisma.$queryRaw<{ id: string }[]>`SELECT id FROM users WHERE id = ${busy.id}::uuid FOR UPDATE SKIP LOCKED`;
+      if (free.length === 0) break;
+      await sleep(10);
+    }
+    // The acceptance takes the organization lock, then waits for the user row...
+    const acceptance = request(t.server).post('/api/v1/staff-invitations/accept').set('Authorization', 'Bearer test:uid-busy:busy.joiner@example.org').send({ token }).then((response) => response);
+    for (let i = 0; i < 300; i += 1) {
+      const [row] = await t.prisma.$queryRaw<{ waiting: number }[]>`SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+      if ((row?.waiting ?? 0) > 0) break;
+      await sleep(10);
+    }
+    // ...and the invitation expires during that wait.
+    t.clock.advance(73 * 3600 * 1000);
+    release();
+    await holder;
+    const response = await acceptance;
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe('INVITATION_INVALID');
+    expect(await t.prisma.staffInvitation.findUniqueOrThrow({ where: { id: created.body.id } })).toMatchObject({ acceptedAt: null, acceptedByUserId: null });
+    expect(await t.prisma.organizationMembership.count({ where: { organizationId: orgId, userId: busy.id } })).toBe(0);
+    t.clock.advance(-73 * 3600 * 1000);
+    // With time to spare, the same acceptance waits for the row and then joins.
+    const fresh = await request(t.server).post('/api/v1/staff-invitations').set('Authorization', admin.authorization).send({ email: 'busy.joiner@example.org', role: 'VIEWER' }).expect(201);
+    await request(t.server).post('/api/v1/staff-invitations/accept').set('Authorization', 'Bearer test:uid-busy:busy.joiner@example.org').send({ token: new URL(fresh.body.acceptUrl).searchParams.get('token') ?? '' }).expect(200);
+    expect(await t.prisma.organizationMembership.count({ where: { organizationId: orgId, userId: busy.id, status: 'ACTIVE' } })).toBe(1);
+  });
+
   it('concurrent participant-notice changes receive distinct, increasing versions (R14)', async () => {
     const admin = await seedUser(t.prisma, orgId, 'ADMIN');
     const before = (await request(t.server).get('/api/v1/organization').set('Authorization', admin.authorization).expect(200)).body;
