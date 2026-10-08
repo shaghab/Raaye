@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { RetentionService } from '@raaye/server';
+import { DeliveryService, JobRunner, MessagePlanner, RetentionService, createTenantDb, resultsReplyKey } from '@raaye/server';
 import { parseCsv as parseCsvDomain, readXlsx as readXlsxDomain } from '@raaye/domain';
 import { drainJobs } from '../testing/jobs';
 import { bootTestApp, resetDatabase, seedOrganization, seedUser, type SeededUser, type TestApp } from '../testing/harness';
@@ -234,6 +234,8 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     await request(t.server).post(`/api/v1/surveys/${surveyId}/close`).set('Authorization', manager.authorization).expect(200);
     // P2's service window is long closed: the results invitation must use a template (R52).
     await t.prisma.conversation.update({ where: { organizationId_contactId: { organizationId: orgId, contactId: people['P2'] } }, data: { lastInboundAt: new Date('2026-10-08T00:00:00Z') } });
+    // P3 withdrew survey invitations only: results sharing has its own permission scope and still reaches them.
+    await request(t.server).post(`/api/v1/contacts/${people['P3']}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_INVITATIONS'], type: 'WITHDRAWN', evidenceAt: '2026-10-09T00:00:00Z', evidenceReference: 'Call' }).expect(201);
     const preview = (await request(t.server).post(`/api/v1/surveys/${surveyId}/results-preview`).set('Authorization', admin.authorization).expect(200)).body;
     expect(preview).toMatchObject({ canShare: true, eligibleRecipients: 3, excluded: { RESULTS_CONSENT_MISSING: 2 }, minimumRespondents: 5, alreadyShared: false });
     expect(preview.questions.map((question: { shareable: boolean }) => question.shareable)).toEqual([true, false, false]);
@@ -250,12 +252,37 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     for (const forbidden of ['P1', 'P2', 'P3', '923002', 'Lahore', 'Karachi', 'WOMAN', 'participationId', 'contactId']) expect(aggregateText).not.toContain(forbidden);
     const aggregate = snapshot.aggregate as { questions: { shareable: boolean; options: unknown[]; validAnswers: number }[] };
     expect(aggregate.questions[1]).toMatchObject({ shareable: false, options: [], validAnswers: 0 });
+    // The sender is disabled when the notices leave the worker: every notice is suppressed and the
+    // recipients show it; an Admin-authorized retry that is accepted makes them invited again.
+    await request(t.server).patch('/api/v1/messaging/configuration').set('Authorization', admin.authorization).send({ enabled: false }).expect(200);
     await drainJobs(t);
+    expect((await request(t.server).get(`/api/v1/surveys/${surveyId}/result-sharing`).set('Authorization', admin.authorization).expect(200)).body.recipients.byState).toEqual({ SUPPRESSED: 3 });
+    expect(await t.prisma.resultRecipient.count({ where: { snapshotId: shared.snapshot.id, accessState: 'SUPPRESSED', suppressionReason: 'CONNECTION_DISABLED' } })).toBe(3);
+    await request(t.server).patch('/api/v1/messaging/configuration').set('Authorization', admin.authorization).send({ enabled: true }).expect(200);
+    for (const message of await t.prisma.message.findMany({ where: { kind: 'RESULTS_INVITATION', snapshotId: shared.snapshot.id } })) {
+      await request(t.server).post(`/api/v1/messages/${message.id}/retry`).set('Authorization', admin.authorization).send({}).expect(202);
+    }
+    await drainJobs(t);
+    expect((await request(t.server).get(`/api/v1/surveys/${surveyId}/result-sharing`).set('Authorization', admin.authorization).expect(200)).body.recipients.byState).toEqual({ INVITED: 3 });
+    // A delivery failure the provider reports after acceptance is evidence on the message, not a loss of access:
+    // P3 can still ask for the results.
+    const p3Invite = await t.prisma.message.findFirstOrThrow({ where: { kind: 'RESULTS_INVITATION', contactId: people['P3'] } });
+    await t.prisma.message.update({ where: { id: p3Invite.id }, data: { deliveryState: 'SENT' } });
+    expect(await t.app.get(DeliveryService).recordStatus(orgId, p3Invite.connectionId, { phoneNumberId: '', providerMessageId: p3Invite.providerMessageId ?? '', recipientIdentity: null, status: 'FAILED', providerAt: new Date(t.clock.now().getTime() + 5000), errorCode: '131026', errorTitle: 'Message undeliverable' })).toBe('RECORDED');
+    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: p3Invite.id } })).toMatchObject({ state: 'ACCEPTED', deliveryState: 'FAILED' });
+    expect((await t.prisma.resultRecipient.findFirstOrThrow({ where: { invitationMessageId: p3Invite.id } })).accessState).toBe('INVITED');
+    await sim('text', { contactId: people['P3'], text: 'RESULTS' }).expect(200);
+    await drainJobs(t);
+    expect((await outbound(people['P3'])).filter((message) => message.kind === 'RESULTS_CONTENT').length).toBeGreaterThanOrEqual(1);
+    expect((await t.prisma.resultRecipient.findFirstOrThrow({ where: { invitationMessageId: p3Invite.id } })).accessState).toBe('VIEWED');
     const p2Invite = await t.prisma.message.findFirstOrThrow({ where: { kind: 'RESULTS_INVITATION', contactId: people['P2'] } });
     expect((p2Invite.rendered as { type: string }).type).toBe('template');
     expect(p2Invite.state).toBe('ACCEPTED');
     const p1Invite = await t.prisma.message.findFirstOrThrow({ where: { kind: 'RESULTS_INVITATION', contactId: people['P1'] } });
     expect((p1Invite.rendered as { type: string }).type).toBe('buttons');
+    // Every recipient the preview counted as eligible was actually sent to, P3 included.
+    expect((await t.prisma.message.findFirstOrThrow({ where: { kind: 'RESULTS_INVITATION', contactId: people['P3'] } })).state).toBe('ACCEPTED');
+    expect(await t.prisma.message.count({ where: { kind: 'RESULTS_INVITATION', snapshotId: shared.snapshot.id, state: 'ACCEPTED' } })).toBe(preview.eligibleRecipients);
     // P1 requests the results: the bound snapshot is delivered as chunked text (R52).
     await tap(people['P1'], 'View results');
     const content = (await outbound(people['P1'])).filter((message) => message.kind === 'RESULTS_CONTENT');
@@ -266,6 +293,11 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     expect(content[0].state).toBe('ACCEPTED');
     const recipient = await t.prisma.resultRecipient.findFirstOrThrow({ where: { snapshotId: shared.snapshot.id, contactId: people['P1'] } });
     expect(recipient.accessState).toBe('VIEWED');
+    // Withdrawing survey invitations alone keeps the shared results reachable: P2's View results still works.
+    await request(t.server).post(`/api/v1/contacts/${people['P2']}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_INVITATIONS'], type: 'WITHDRAWN', evidenceAt: '2026-10-09T12:00:00Z', evidenceReference: 'Call' }).expect(201);
+    await tap(people['P2'], 'View results');
+    expect((await outbound(people['P2'])).filter((message) => message.kind === 'RESULTS_CONTENT').map((message) => message.state)).toContain('ACCEPTED');
+    expect((await t.prisma.resultRecipient.findFirstOrThrow({ where: { snapshotId: shared.snapshot.id, contactId: people['P2'] } })).accessState).toBe('VIEWED');
     // RESULTS command lists shared snapshots; non-recipients get nothing.
     await sim('text', { contactId: people['P1'], text: 'RESULTS' }).expect(200);
     await drainJobs(t);
@@ -274,12 +306,238 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     await drainJobs(t);
     expect([...(await outbound(people['=P4']))].pop()?.text).toContain('No shared results');
     const status = (await request(t.server).get(`/api/v1/surveys/${surveyId}/result-sharing`).set('Authorization', manager.authorization).expect(200)).body;
-    expect(status.recipients.byState).toMatchObject({ VIEWED: 1, INVITED: 2 });
-    const revoked = (await request(t.server).post(`/api/v1/surveys/${surveyId}/result-sharing/revoke`).set('Authorization', admin.authorization).expect(200)).body;
-    expect(revoked.snapshot.revokedAt).not.toBeNull();
+    expect(status.recipients.byState).toEqual({ VIEWED: 3 });
+    expect(status.recipients.byDelivery).toMatchObject({ FAILED: 1 });
+  });
+
+  it('revoking cancels the result notices still queued and a revoked snapshot is refused at send time (R51, R53)', async () => {
+    // Five respondents who can still be invited (P2 and P3 withdrew invitations above), so the first question
+    // clears the minimum sample; P5 never granted results permission, so four notices are queued.
+    const respondents = ['P1', 'P5', 'P6', 'P7', 'P8'];
+    const created = (await request(t.server).post('/api/v1/surveys').set('Authorization', manager.authorization).send({ internalTitle: 'Revocation survey', title: { en: 'Revocation survey' }, introduction: { en: 'Intro' }, questions: QUESTIONS, audience: { mode: 'SELECTED', contactIds: respondents.map((name) => people[name]) } }).expect(201)).body;
+    const id: string = created.id;
+    await request(t.server).post(`/api/v1/surveys/${id}/launch`).set('Authorization', manager.authorization).send({ mode: 'NOW' }).expect(200);
+    await drainJobs(t);
+    for (const name of respondents) {
+      await tap(people[name], 'Start survey', (message) => message.kind === 'INVITATION');
+      if ((await outbound(people[name])).some((message) => message.kind === 'PROFILE_OFFER' && message.controls.length > 0)) await tap(people[name], 'Skip');
+      await tap(people[name], 'Yes', (message) => message.text.includes('Question 1 of 3'));
+    }
+    await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
+    const shared = (await request(t.server).post(`/api/v1/surveys/${id}/share-results`).set('Authorization', admin.authorization).send({ confirm: true }).expect(200)).body;
+    const snapshotId: string = shared.snapshot.id;
+    expect(shared.snapshot).toMatchObject({ eligibleCount: 4, suppressedCount: 1 });
+    const queued = await t.prisma.message.findMany({ where: { kind: 'RESULTS_INVITATION', snapshotId }, orderBy: { createdAt: 'asc' } });
+    expect(queued.map((message) => message.state)).toEqual(['PENDING', 'PENDING', 'PENDING', 'PENDING']);
+    const noticeOf = (name: string) => {
+      const notice = queued.find((message) => message.contactId === people[name]);
+      if (!notice) throw new Error(`no notice for ${name}`);
+      return notice;
+    };
+    const runner = t.app.get(JobRunner);
+    // Process one inbound message and send only the replies it produced, leaving the queued notices untouched.
+    const converse = async (name: string, text: string) => {
+      const { eventId } = (await sim('text', { contactId: people[name], text }).expect(200)).body as { eventId: string };
+      expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `inbound:${eventId}` } })).id)).toBe('DONE');
+      for (const reply of await t.prisma.message.findMany({ where: { contactId: people[name], state: 'PENDING', kind: { not: 'RESULTS_INVITATION' } } })) {
+        expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${reply.id}` } })).id)).toBe('DONE');
+      }
+      return [...(await outbound(people[name]))].pop();
+    };
+    const withdraw = (name: string, scopes: string[], evidenceAt: string) =>
+      request(t.server).post(`/api/v1/contacts/${people[name]}/consent-events`).set('Authorization', manager.authorization).send({ scopes, type: 'WITHDRAWN', evidenceAt, evidenceReference: 'Call' }).expect(201);
+    // P6 withdraws survey invitations only: the queued results notice and its job stay, results permission is intact.
+    await withdraw('P6', ['SURVEY_INVITATIONS'], '2026-10-09T12:00:00Z');
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: noticeOf('P6').id } })).state).toBe('PENDING');
+    expect((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${noticeOf('P6').id}` } })).status).toBe('PENDING');
+    // P1 has two shared surveys, so RESULTS queues a menu; an invitation-only withdrawal while it is queued leaves
+    // the menu, its View results controls and the queued notice alone.
+    const { eventId: menuEvent } = (await sim('text', { contactId: people['P1'], text: 'RESULTS' }).expect(200)).body as { eventId: string };
+    expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `inbound:${menuEvent}` } })).id)).toBe('DONE');
+    const menu = await t.prisma.message.findUniqueOrThrow({ where: { dedupeKey: resultsReplyKey('menu', menuEvent) } });
+    expect(menu.state).toBe('PENDING');
+    await withdraw('P1', ['SURVEY_INVITATIONS'], '2026-10-09T12:30:00Z');
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: menu.id } })).state).toBe('PENDING');
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: noticeOf('P1').id } })).state).toBe('PENDING');
+    expect(await t.prisma.actionBinding.count({ where: { contactId: people['P1'], purpose: 'VIEW_RESULTS', expiresAt: { gt: t.clock.now() } } })).toBeGreaterThanOrEqual(2);
+    expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${menu.id}` } })).id)).toBe('DONE');
+    const sentMenu = [...(await outbound(people['P1']))].pop();
+    expect(sentMenu).toMatchObject({ kind: 'COMMAND_REPLY', state: 'ACCEPTED' });
+    expect(sentMenu?.controls).toHaveLength(2);
+    // A results-only withdrawal cancels a queued results menu together with the queued notice, and a respondent
+    // without current results permission gets the not-eligible reply, never a menu of titles.
+    const { eventId: secondMenuEvent } = (await sim('text', { contactId: people['P1'], text: 'RESULTS' }).expect(200)).body as { eventId: string };
+    expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `inbound:${secondMenuEvent}` } })).id)).toBe('DONE');
+    const secondMenu = await t.prisma.message.findUniqueOrThrow({ where: { dedupeKey: resultsReplyKey('menu', secondMenuEvent) } });
+    expect(secondMenu.state).toBe('PENDING');
+    await withdraw('P1', ['SURVEY_RESULTS'], '2026-10-09T12:40:00Z');
+    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: secondMenu.id } })).toMatchObject({ state: 'CANCELED', suppressionReason: 'CONTACT_WITHDRAWN' });
+    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: noticeOf('P1').id } })).toMatchObject({ state: 'CANCELED', suppressionReason: 'CONTACT_WITHDRAWN' });
+    expect(await t.prisma.resultRecipient.findFirstOrThrow({ where: { snapshotId, contactId: people['P1'] } })).toMatchObject({ accessState: 'SUPPRESSED', suppressionReason: 'CONTACT_WITHDRAWN' });
+    const denied = await converse('P1', 'RESULTS');
+    expect(denied?.text).toContain('no longer available');
+    expect(denied?.controls ?? []).toHaveLength(0);
+    await request(t.server).post(`/api/v1/contacts/${people['P1']}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_RESULTS'], type: 'GRANTED', evidenceAt: '2026-10-09T12:50:00Z', evidenceReference: 'Signed form', reviewedNewEvidence: true }).expect(201);
+    // A results withdrawal that arrives while a RESULTS command is being processed. The processing holds the contact
+    // lock from before it reads the permission until it has queued the menu, so the withdrawal waits for it and then
+    // cancels that menu and expires its controls; nothing built on the earlier read can leave. The processing is held
+    // here at its conversation update, after the permission read, until the withdrawal is seen waiting for the lock.
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const lockWaiters = async () => (await t.prisma.$queryRaw<{ waiting: number }[]>`SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`)[0]?.waiting ?? 0;
+    const untilLockWaiters = async (count: number) => {
+      for (let i = 0; i < 300 && (await lockWaiters()) < count; i += 1) await sleep(10);
+    };
+    let releaseConversation: () => void = () => undefined;
+    const conversationHeld = new Promise<void>((resolve) => {
+      releaseConversation = resolve;
+    });
+    const holdingConversation = t.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM conversations WHERE contact_id = ${people['P1']}::uuid FOR UPDATE`;
+        await conversationHeld;
+      },
+      { timeout: 20_000 },
+    );
+    for (let i = 0; i < 300; i += 1) {
+      const free = await t.prisma.$queryRaw<{ id: string }[]>`SELECT id FROM conversations WHERE contact_id = ${people['P1']}::uuid FOR UPDATE SKIP LOCKED`;
+      if (free.length === 0) break;
+      await sleep(10);
+    }
+    const { eventId: racedEvent } = (await sim('text', { contactId: people['P1'], text: 'RESULTS' }).expect(200)).body as { eventId: string };
+    const processing = runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `inbound:${racedEvent}` } })).id);
+    await untilLockWaiters(1);
+    const withdrawing = withdraw('P1', ['SURVEY_RESULTS'], '2026-10-09T12:55:00Z').then((response) => response.status);
+    await untilLockWaiters(2);
+    releaseConversation();
+    await holdingConversation;
+    expect(await processing).toBe('DONE');
+    expect(await withdrawing).toBe(201);
+    const racedMenu = await t.prisma.message.findUniqueOrThrow({ where: { dedupeKey: resultsReplyKey('menu', racedEvent) } });
+    expect(racedMenu).toMatchObject({ kind: 'COMMAND_REPLY', state: 'CANCELED', suppressionReason: 'CONTACT_WITHDRAWN' });
+    expect((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${racedMenu.id}` } })).status).toBe('CANCELED');
+    expect(await t.prisma.messageAttempt.count({ where: { messageId: racedMenu.id } })).toBe(0);
+    expect(await t.prisma.actionBinding.count({ where: { contactId: people['P1'], purpose: { in: ['VIEW_RESULTS', 'MENU_SELECT'] }, expiresAt: { gt: t.clock.now() } } })).toBe(0);
+    expect((await t.prisma.contact.findUniqueOrThrow({ where: { id: people['P1'] } })).consentResults).toBe('WITHDRAWN');
+    await request(t.server).post(`/api/v1/contacts/${people['P1']}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_RESULTS'], type: 'GRANTED', evidenceAt: '2026-10-09T12:58:00Z', evidenceReference: 'Signed form', reviewedNewEvidence: true }).expect(201);
+    // A queued reply about a survey (P8's HELP answer) is canceled by an invitation-only withdrawal; the notice stays.
+    const { eventId: helpEvent } = (await sim('text', { contactId: people['P8'], text: 'HELP' }).expect(200)).body as { eventId: string };
+    expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `inbound:${helpEvent}` } })).id)).toBe('DONE');
+    const helpReply = await t.prisma.message.findFirstOrThrow({ where: { contactId: people['P8'], kind: 'COMMAND_REPLY', state: 'PENDING' } });
+    await withdraw('P8', ['SURVEY_INVITATIONS'], '2026-10-09T12:45:00Z');
+    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: helpReply.id } })).toMatchObject({ state: 'CANCELED', suppressionReason: 'CONTACT_WITHDRAWN' });
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: noticeOf('P8').id } })).state).toBe('PENDING');
+    // P7 withdraws results permission while the notice is queued: the notice is canceled and the recipient marked;
+    // valid new evidence restores access to the already-shared results without another notice.
+    await withdraw('P7', ['SURVEY_RESULTS'], '2026-10-09T13:00:00Z');
+    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: noticeOf('P7').id } })).toMatchObject({ state: 'CANCELED', suppressionReason: 'CONTACT_WITHDRAWN' });
+    expect((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${noticeOf('P7').id}` } })).status).toBe('CANCELED');
+    expect(await t.prisma.resultRecipient.findFirstOrThrow({ where: { snapshotId, contactId: people['P7'] } })).toMatchObject({ accessState: 'SUPPRESSED', suppressionReason: 'CONTACT_WITHDRAWN' });
+    expect((await converse('P7', 'RESULTS'))?.text).toContain('no longer available');
+    expect((await outbound(people['P7'])).filter((message) => message.kind === 'RESULTS_CONTENT')).toHaveLength(0);
+    await request(t.server).post(`/api/v1/contacts/${people['P7']}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_RESULTS'], type: 'GRANTED', evidenceAt: '2026-10-09T14:00:00Z', evidenceReference: 'Signed form', reviewedNewEvidence: true }).expect(201);
+    expect((await converse('P7', 'RESULTS'))?.kind).toBe('RESULTS_CONTENT');
+    expect((await outbound(people['P7'])).filter((message) => message.kind === 'RESULTS_CONTENT' && message.state === 'ACCEPTED').length).toBeGreaterThanOrEqual(1);
+    expect((await t.prisma.resultRecipient.findFirstOrThrow({ where: { snapshotId, contactId: people['P7'] } })).accessState).toBe('VIEWED');
+    // A revocation that commits while a worker is handing a notice over: the hand-off holds a share lock on the
+    // snapshot, so the revocation waits for the worker's claim and the policy recheck inside the hand-off sees it.
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const revocation = t.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM result_snapshots WHERE id = ${snapshotId}::uuid FOR UPDATE`;
+        await tx.resultSnapshot.update({ where: { id: snapshotId }, data: { revokedAt: t.clock.now() } });
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+    for (let i = 0; i < 300; i += 1) {
+      const free = await t.prisma.$queryRaw<{ id: string }[]>`SELECT id FROM result_snapshots WHERE id = ${snapshotId}::uuid FOR UPDATE SKIP LOCKED`;
+      if (free.length === 0) break;
+      await sleep(10);
+    }
+    const raced = noticeOf('P8');
+    const handoff = runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${raced.id}` } })).id);
+    for (let i = 0; i < 300; i += 1) {
+      const [row] = await t.prisma.$queryRaw<{ waiting: number }[]>`SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+      if ((row?.waiting ?? 0) > 0) break;
+      await sleep(10);
+    }
+    release();
+    await revocation;
+    expect(await handoff).toBe('DONE');
+    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: raced.id } })).toMatchObject({ state: 'SUPPRESSED', suppressionReason: 'RESULTS_REVOKED' });
+    expect(await t.prisma.messageAttempt.findMany({ where: { messageId: raced.id } })).toEqual([expect.objectContaining({ outcome: 'FAILED', errorCode: 'RESULTS_REVOKED' })]);
+    expect(await t.prisma.resultRecipient.findFirstOrThrow({ where: { invitationMessageId: raced.id } })).toMatchObject({ accessState: 'SUPPRESSED', suppressionReason: 'RESULTS_REVOKED' });
+    // A notice a worker picks up once the revocation is committed is refused before any attempt.
+    const late = noticeOf('P6');
+    expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${late.id}` } })).id)).toBe('DONE');
+    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: late.id } })).toMatchObject({ state: 'SUPPRESSED', suppressionReason: 'RESULTS_REVOKED' });
+    expect(await t.prisma.messageAttempt.count({ where: { messageId: late.id } })).toBe(0);
+    // The Admin's revocation finds nothing left to cancel (P1's notice went with the results withdrawal) and records that.
+    const revoked = (await request(t.server).post(`/api/v1/surveys/${id}/result-sharing/revoke`).set('Authorization', admin.authorization).expect(200)).body;
+    expect(revoked.snapshot.broadcastState).toBe('REVOKED');
+    expect(revoked.recipients.byState).toEqual({ SUPPRESSED: 3, VIEWED: 1 });
+    const audit = await t.prisma.auditEvent.findFirst({ where: { organizationId: orgId, action: 'results.revoked', resourceId: id } });
+    expect(audit?.metadata).toMatchObject({ snapshotId, canceledInvitations: 0, canceledJobs: 0 });
+    await drainJobs(t);
+    // No notice of this broadcast ever left: two refused at send time, two canceled by withdrawals before a worker saw them.
+    const states = (await t.prisma.message.findMany({ where: { snapshotId, kind: 'RESULTS_INVITATION' }, select: { state: true } })).map((message) => message.state).sort();
+    expect(states).toEqual(['CANCELED', 'CANCELED', 'SUPPRESSED', 'SUPPRESSED']);
+    expect(await t.prisma.messageAttempt.count({ where: { message: { snapshotId, kind: 'RESULTS_INVITATION' }, outcome: { not: 'FAILED' } } })).toBe(0);
+    // Revoking the first survey's snapshot as well leaves P1 with nothing to list.
+    const revokedFirst = (await request(t.server).post(`/api/v1/surveys/${surveyId}/result-sharing/revoke`).set('Authorization', admin.authorization).expect(200)).body;
+    expect(revokedFirst.snapshot.revokedAt).not.toBeNull();
     await sim('text', { contactId: people['P1'], text: 'RESULTS' }).expect(200);
     await drainJobs(t);
     expect([...(await outbound(people['P1']))].pop()?.text).toContain('No shared results');
+  });
+
+  it('the page control of a results menu follows results permission like View results (R51)', async () => {
+    // Ten shared surveys would page the results menu; the menu is built directly here because the suite has two snapshots.
+    const snapshots = await t.prisma.resultSnapshot.findMany({ where: { organizationId: orgId }, select: { id: true } });
+    expect(snapshots.length).toBeGreaterThanOrEqual(2);
+    const connection = await t.prisma.messagingConnection.findFirstOrThrow({ where: { organizationId: orgId } });
+    const planner = t.app.get(MessagePlanner);
+    const delivery = t.app.get(DeliveryService);
+    const db = createTenantDb(t.prisma, orgId);
+    const items = Array.from({ length: 10 }, (_, index) => ({ label: `Shared survey ${index + 1}`, purpose: 'VIEW_RESULTS' as const, snapshotId: snapshots[index % snapshots.length].id }));
+    const buildMenu = async (key: string) => {
+      const message = await db.$transaction(async (tx) => {
+        const rendered = await planner.menu(tx, { organizationId: orgId, contact: { id: people['P1'], connectionId: connection.id }, mode: 'LIVE', body: 'Which results?', buttonText: 'Results', items, expiresAt: new Date(t.clock.now().getTime() + 86_400_000) });
+        return delivery.createMessage(tx, { organizationId: orgId, connectionId: connection.id, contactId: people['P1'], kind: 'COMMAND_REPLY', rendered, dedupeKey: resultsReplyKey('menu', key) });
+      });
+      await drainJobs(t);
+      const next = await t.prisma.actionBinding.findFirstOrThrow({ where: { contactId: people['P1'], purpose: 'MENU_SELECT', expiresAt: { gt: t.clock.now() } }, orderBy: { createdAt: 'desc' } });
+      expect(next.payload).toMatchObject({ menu: 'next', page: 1, results: true });
+      return { messageId: message.id, next };
+    };
+    const withdraw = (scopes: string[], evidenceAt: string) =>
+      request(t.server).post(`/api/v1/contacts/${people['P1']}/consent-events`).set('Authorization', manager.authorization).send({ scopes, type: 'WITHDRAWN', evidenceAt, evidenceReference: 'Call' }).expect(201);
+    const liveControls = () => t.prisma.actionBinding.count({ where: { contactId: people['P1'], purpose: { in: ['VIEW_RESULTS', 'MENU_SELECT'] }, expiresAt: { gt: t.clock.now() } } });
+    // Withdrawing survey invitations leaves the results menu's controls, including its page control, alive; the next page is served.
+    const first = await buildMenu('page-1');
+    await withdraw(['SURVEY_INVITATIONS'], '2026-10-09T15:00:00Z');
+    expect(await liveControls()).toBe(10);
+    await tap(people['P1'], 'Next page', (message) => message.id === first.messageId);
+    const page = [...(await outbound(people['P1']))].pop();
+    expect(page).toMatchObject({ kind: 'COMMAND_REPLY', state: 'ACCEPTED' });
+    expect(page?.text).toBe('Which results would you like to see?');
+    expect(page?.controls).toHaveLength(1);
+    // Withdrawing results expires the page control with the View results controls (the served page added one row control).
+    const beforeSecond = await liveControls();
+    const second = await buildMenu('page-2');
+    expect(await liveControls()).toBe(beforeSecond + 10);
+    await withdraw(['SURVEY_RESULTS'], '2026-10-09T15:30:00Z');
+    expect(await liveControls()).toBe(0);
+    expect((await t.prisma.actionBinding.findUniqueOrThrow({ where: { id: second.next.id } })).expiresAt.getTime()).toBeLessThanOrEqual(t.clock.now().getTime());
+    // A page control that is still live is refused for a respondent without results permission.
+    const third = await buildMenu('page-3');
+    const pagesBefore = await t.prisma.message.count({ where: { contactId: people['P1'], dedupeKey: { startsWith: 'results-menu:' } } });
+    await tap(people['P1'], 'Next page', (message) => message.id === third.messageId);
+    expect([...(await outbound(people['P1']))].pop()?.text).toContain('no longer available');
+    expect(await t.prisma.message.count({ where: { contactId: people['P1'], dedupeKey: { startsWith: 'results-menu:' } } })).toBe(pagesBefore);
   });
 
   it('retention cleanup removes staged imports, raw webhooks and quarantine without touching answers (R56)', async () => {

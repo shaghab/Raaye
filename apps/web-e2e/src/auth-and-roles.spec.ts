@@ -24,6 +24,9 @@ test.describe('authentication and roles (R03, R04, R05, R06)', () => {
     await page.goto('/contacts');
     await expect(page).toHaveURL(/overview/);
     await page.getByRole('link', { name: 'Surveys' }).click();
+    // Found by search, so surveys created by earlier runs cannot push the seeded one off the first page.
+    await page.getByLabel('Search').fill('Access to justice');
+    await page.getByRole('button', { name: 'Apply' }).click();
     await page.getByRole('link', { name: /Access to justice 2026/ }).click();
     await expect(page.getByTestId('survey-heading')).toContainText('Access to justice');
     await expect(page.getByRole('tab', { name: 'Results' })).toBeVisible();

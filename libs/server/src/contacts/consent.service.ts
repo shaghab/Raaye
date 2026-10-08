@@ -10,6 +10,7 @@ import { PrismaService } from '../persistence/prisma.service';
 import type { ConsentSource } from '../persistence/prisma.service';
 import { TenantDbFactory } from '../persistence/tenant-db.factory';
 import type { TenantTx } from '../persistence/tenant-db';
+import { lockContact } from './contact-lock';
 import { cancelPendingOutreach } from './outreach-cancellation';
 
 export interface ConsentEventInput {
@@ -73,7 +74,7 @@ export class ConsentService {
       throw new DomainError('VALIDATION_FAILED', 'Evidence time cannot be in the future', undefined, [{ path: 'evidenceAt', message: 'In the future' }]);
     }
     await db.$transaction(async (tx) => {
-      await this.lockContact(tx, contactId);
+      await lockContact(tx, contactId);
       if (input.type === 'GRANTED') {
         for (const scope of input.scopes) {
           const current = deriveConsent(await this.loadEvents(tx, contactId), scope);
@@ -108,9 +109,8 @@ export class ConsentService {
           note: input.note ?? null,
         })),
       );
-      if (input.type === 'WITHDRAWN' && input.scopes.includes('SURVEY_INVITATIONS')) {
-        await cancelPendingOutreach(tx, contactId, 'CONTACT_WITHDRAWN', now);
-      }
+      // Only the withdrawn scopes lose their queued outreach: results permission alone keeps result notices.
+      if (input.type === 'WITHDRAWN') await cancelPendingOutreach(tx, contactId, 'CONTACT_WITHDRAWN', now, input.scopes);
       await this.audit.record(
         ctx,
         {
@@ -166,7 +166,7 @@ export class ConsentService {
   /** Insert events and recompute the effective status cache for the contact. */
   async applyEvents(tx: TenantTx, contactId: string, events: ConsentEventInput[]): Promise<void> {
     if (events.length === 0) return;
-    const organizationId = await this.lockContact(tx, contactId);
+    const { organizationId } = await lockContact(tx, contactId);
     await tx.consentEvent.createMany({
       data: events.map((event) => ({
         organizationId,
@@ -203,17 +203,5 @@ export class ConsentService {
 
   private async loadEvents(tx: TenantTx, contactId: string) {
     return tx.consentEvent.findMany({ where: { contactId }, select: { scope: true, type: true, evidenceAt: true, recordedAt: true }, orderBy: [{ evidenceAt: 'asc' }, { recordedAt: 'asc' }] });
-  }
-
-  /**
-   * Row lock on the contact so concurrent consent decisions serialize (a STOP racing a staff
-   * grant or an import attestation). The tenant-scoped read proves the contact belongs to the
-   * organization before the raw lock statement runs; the lock is held until the transaction ends.
-   */
-  private async lockContact(tx: TenantTx, contactId: string): Promise<string> {
-    const contact = await tx.contact.findUnique({ where: { id: contactId }, select: { id: true, organizationId: true } });
-    if (!contact) throw notFound('Contact');
-    await tx.$queryRaw`SELECT id FROM contacts WHERE id = ${contact.id}::uuid AND organization_id = ${contact.organizationId}::uuid FOR UPDATE`;
-    return contact.organizationId;
   }
 }

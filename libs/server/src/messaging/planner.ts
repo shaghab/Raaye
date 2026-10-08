@@ -234,7 +234,10 @@ export class MessagePlanner {
       rows.push({ id: binding.token, title: truncate(item.label, WHATSAPP_LIMITS.list.rowTitleChars), description: item.description ? truncate(item.description, WHATSAPP_LIMITS.list.rowDescriptionChars) : undefined });
     }
     if (input.items.length > (page + 1) * pageSize) {
-      const next = await this.mint(tx, { organizationId: input.organizationId, connectionId: input.contact.connectionId, contactId: input.contact.id, purpose: 'MENU_SELECT', mode: input.mode, payload: { menu: 'next', page: page + 1, items: input.items }, expiresAt: input.expiresAt });
+      // A results menu's page control is itself about shared results: withdrawals and the permission
+      // recheck before the next page recognize it by this flag.
+      const results = input.items.every((item) => item.purpose === 'VIEW_RESULTS');
+      const next = await this.mint(tx, { organizationId: input.organizationId, connectionId: input.contact.connectionId, contactId: input.contact.id, purpose: 'MENU_SELECT', mode: input.mode, payload: { menu: 'next', page: page + 1, items: input.items, ...(results ? { results: true } : {}) }, expiresAt: input.expiresAt });
       rows.push({ id: next.token, title: copy.pageNext });
     }
     if (rows.length <= WHATSAPP_LIMITS.replyButtons.max && rows.every((row) => row.title.length <= WHATSAPP_LIMITS.replyButtons.titleChars && !row.description)) {

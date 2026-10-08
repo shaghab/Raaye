@@ -1,0 +1,224 @@
+{
+  "branch": "claude/great-ptolemy-ro6mqe",
+  "pullRequest": {
+    "number": 25,
+    "url": "https://github.com/shaghab/Raaye/pull/25",
+    "base": "main",
+    "closes": [
+      8,
+      11,
+      12,
+      18
+    ]
+  },
+  "reviewRequests": [
+    {
+      "round": 1,
+      "headSha": "7b2a567",
+      "requestedAt": "2026-10-08T02:21:32.845928+00:00",
+      "status": "completed",
+      "trigger": "pull request opened (Codex reviews new pull requests automatically)",
+      "reviewedAt": "2026-10-08T02:25:05Z",
+      "findings": 3,
+      "outcome": "2 P1 (invitation-only withdrawal canceled queued result notices and View results controls; revocation not serialized with the hand-off) and 1 P2 (recipient state not restored by an accepted retry, a defect of this change) fixed in 527ea06"
+    },
+    {
+      "round": 2,
+      "headSha": "527ea06",
+      "status": "completed",
+      "trigger": "@codex review comment 6051037667",
+      "reviewedAt": "2026-10-08T02:41:55Z",
+      "findings": 1,
+      "outcome": "P1: a FAILED callback on an accepted notice removed the recipient from RESULTS with no retry possible; fixed in de5026f (callback failures no longer touch the recipient)"
+    },
+    {
+      "round": 3,
+      "headSha": "de5026f",
+      "status": "completed",
+      "trigger": "@codex review comment 6051145885",
+      "reviewedAt": "2026-10-08T02:51:20Z",
+      "findings": 2,
+      "outcome": "2 P2, both consequences of this change: a results re-grant could not restore access to a shared snapshot; an invitation-only withdrawal canceled a queued results menu. Fixed in 9f0cd89"
+    },
+    {
+      "round": 4,
+      "headSha": "9f0cd89",
+      "status": "completed",
+      "trigger": "@codex review comment 6051280722",
+      "reviewedAt": "2026-10-08T03:07:29Z",
+      "findings": 1,
+      "outcome": "P2 (invitation-only withdrawal left queued survey replies to be sent with expired controls, a consequence of the round-3 fix) fixed in 23cb902"
+    },
+    {
+      "round": 5,
+      "headSha": "23cb902",
+      "status": "completed",
+      "trigger": "@codex review comment 6051426551",
+      "reviewedAt": "2026-10-08T03:18:53Z",
+      "findings": 2,
+      "outcome": "2 P2, both consequences of the round-3/4 fixes: the RESULTS command built a menu for a respondent without current results permission; a results-only withdrawal left a queued results menu. Fixed in 8da35c4"
+    },
+    {
+      "round": 6,
+      "headSha": "7c3c206",
+      "status": "completed",
+      "trigger": "@codex review comment",
+      "reviewedAt": "2026-10-08T03:37:37Z",
+      "findings": 1,
+      "outcome": "P2 (a paginated results menu's page control survived a results withdrawal and skipped the permission check, a consequence of the round-3 fix) fixed in 42d48de"
+    },
+    {
+      "round": 7,
+      "headSha": "42d48de",
+      "status": "completed",
+      "trigger": "@codex review comment 6051750131",
+      "reviewedAt": "2026-10-08T03:50:52Z",
+      "findings": 1,
+      "outcome": "P2 (a results menu built on a permission read that a concurrent results withdrawal invalidated before the menu was inserted, a consequence of the round-3 fix) fixed in-PR: inbound processing runs under the contact lock"
+    },
+    {
+      "round": 8,
+      "headSha": "c620e72",
+      "requestedAt": "2026-10-08T04:12:05Z",
+      "status": "completed",
+      "trigger": "@codex review comment 6052041846",
+      "reviewedAt": "2026-10-08T04:15:08Z",
+      "findings": 0,
+      "outcome": "No findings (\"Didn't find any major issues\", comment 6052077423)"
+    }
+  ],
+  "processedFindings": [
+    {
+      "commentId": 4213978007,
+      "threadId": "PRRT_kwDOU--Sjc6qK4PI",
+      "priority": "P1",
+      "file": "libs/server/src/contacts/outreach-cancellation.ts",
+      "title": "Scope cancellation to the withdrawn permission",
+      "action": "fixed",
+      "commit": "527ea06",
+      "resolved": true,
+      "replyCommentId": 4214041748
+    },
+    {
+      "commentId": 4213978011,
+      "threadId": "PRRT_kwDOU--Sjc6qK4PK",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Serialize revocation with the provider handoff",
+      "action": "fixed",
+      "commit": "527ea06",
+      "resolved": true,
+      "replyCommentId": 4214041881
+    },
+    {
+      "commentId": 4213978015,
+      "threadId": "PRRT_kwDOU--Sjc6qK4PN",
+      "priority": "P2",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Restore recipient state after a successful retry",
+      "action": "fixed",
+      "reason": "defect introduced by this pull request",
+      "commit": "527ea06",
+      "resolved": true,
+      "replyCommentId": 4214041997
+    },
+    {
+      "commentId": 4214061361,
+      "threadId": "PRRT_kwDOU--Sjc6qLEtB",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Keep callback failures eligible for retry",
+      "action": "fixed",
+      "commit": "de5026f",
+      "resolved": true,
+      "replyCommentId": 4214090806
+    },
+    {
+      "commentId": 4214105933,
+      "threadId": "PRRT_kwDOU--Sjc6qLLlK",
+      "priority": "P2",
+      "file": "libs/server/src/conversation/results-access.service.ts",
+      "title": "Restore snapshot access after a new results grant",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "9f0cd89",
+      "resolved": true,
+      "replyCommentId": 4214152652
+    },
+    {
+      "commentId": 4214105941,
+      "threadId": "PRRT_kwDOU--Sjc6qLLlS",
+      "priority": "P2",
+      "file": "libs/server/src/contacts/outreach-cancellation.ts",
+      "title": "Preserve queued results menus on invitation-only withdrawal",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "9f0cd89",
+      "resolved": true,
+      "replyCommentId": 4214152776
+    },
+    {
+      "commentId": 4214182466,
+      "threadId": "PRRT_kwDOU--Sjc6qLXV0",
+      "priority": "P2",
+      "file": "libs/server/src/contacts/outreach-cancellation.ts",
+      "title": "Cancel queued survey replies after invitation withdrawal",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "23cb902",
+      "resolved": true,
+      "replyCommentId": 4214217924
+    },
+    {
+      "commentId": 4214236876,
+      "threadId": "PRRT_kwDOU--Sjc6qLfr2",
+      "priority": "P2",
+      "file": "libs/server/src/conversation/results-access.service.ts",
+      "title": "Check results consent before constructing the menu",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "8da35c4",
+      "resolved": true,
+      "replyCommentId": 4214306530
+    },
+    {
+      "commentId": 4214236879,
+      "threadId": "PRRT_kwDOU--Sjc6qLfr3",
+      "priority": "P2",
+      "file": "libs/server/src/contacts/outreach-cancellation.ts",
+      "title": "Cancel queued result menus on results withdrawal",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "8da35c4",
+      "resolved": true,
+      "replyCommentId": 4214306653
+    },
+    {
+      "commentId": 4214323922,
+      "threadId": "PRRT_kwDOU--Sjc6qLtL_",
+      "priority": "P2",
+      "file": "libs/server/src/contacts/outreach-cancellation.ts",
+      "title": "Expire result pagination on results withdrawal",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "42d48de",
+      "resolved": true,
+      "replyCommentId": 4214364099
+    },
+    {
+      "commentId": 4214385348,
+      "threadId": "PRRT_kwDOU--Sjc6qL2xf",
+      "priority": "P2",
+      "file": "libs/server/src/conversation/conversation.service.ts",
+      "title": "Recheck results consent when sending menus",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "c620e72",
+      "resolved": true,
+      "replyCommentId": 4214530037
+    }
+  ],
+  "issues": [],
+  "blockers": [],
+  "updatedAt": "2026-10-08T04:18:17.327332+00:00"
+}

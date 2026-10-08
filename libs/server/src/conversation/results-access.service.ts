@@ -5,6 +5,7 @@ import { AuditService } from '../audit/audit.service';
 import { CLOCK } from '../clock/clock.service';
 import type { SystemContext } from '../common/context';
 import { JOB_PRIORITY } from '../jobs/jobs.service';
+import { resultsReplyKey } from '../messaging/dedupe';
 import { DeliveryService } from '../messaging/delivery.service';
 import type { Contact, MessagingConnection } from '../persistence/prisma.service';
 import type { TenantTx } from '../persistence/tenant-db';
@@ -18,10 +19,20 @@ export class ResultsAccessService {
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
-  /** Snapshots already shared with this respondent and not revoked. */
+  /** Current results permission decides access to shared results; a recipient row only records what happened to the notice. */
+  eligible(contact: Pick<Contact, 'consentResults' | 'archivedAt'>): boolean {
+    return contact.consentResults === 'GRANTED' && !contact.archivedAt;
+  }
+
+  /**
+   * Snapshots already shared with this respondent and not revoked, for a respondent who is
+   * eligible now (see `eligible`, checked by the caller before anything is built). The recipient
+   * row records the notice's outcome, so a permission withdrawn while the notice was queued and
+   * validly re-granted later restores access without another notice.
+   */
   async availableFor(tx: TenantTx, contactId: string): Promise<{ snapshotId: string; title: string }[]> {
     const recipients = await tx.resultRecipient.findMany({
-      where: { contactId, accessState: { in: ['INVITED', 'VIEWED'] }, snapshot: { revokedAt: null } },
+      where: { contactId, snapshot: { revokedAt: null } },
       include: { snapshot: { include: { run: { include: { revision: { select: { title: true, locale: true } } } } } } },
       orderBy: { createdAt: 'desc' },
       take: 20,
@@ -32,8 +43,8 @@ export class ResultsAccessService {
   /** Validate eligibility again and queue the bound summary chunks inside the current window. */
   async deliver(tx: TenantTx, ctx: SystemContext, contact: Contact, connection: MessagingConnection, snapshotId: string, eventId: string): Promise<string> {
     const recipient = await tx.resultRecipient.findUnique({ where: { organizationId_snapshotId_contactId: { organizationId: ctx.organizationId, snapshotId, contactId: contact.id } }, include: { snapshot: true } });
-    if (!recipient || recipient.snapshot.revokedAt || contact.consentResults !== 'GRANTED' || contact.archivedAt) {
-      await this.delivery.createMessage(tx, { organizationId: ctx.organizationId, connectionId: connection.id, contactId: contact.id, kind: 'COMMAND_REPLY', rendered: { type: 'text', body: copy.notEligible }, dedupeKey: `results-denied:${eventId}` });
+    if (!recipient || recipient.snapshot.revokedAt || !this.eligible(contact)) {
+      await this.delivery.createMessage(tx, { organizationId: ctx.organizationId, connectionId: connection.id, contactId: contact.id, kind: 'COMMAND_REPLY', rendered: { type: 'text', body: copy.notEligible }, dedupeKey: resultsReplyKey('denied', eventId) });
       return 'RESULTS_NOT_ELIGIBLE';
     }
     const org = await tx.organization.findUniqueOrThrow({ where: { id: ctx.organizationId } });

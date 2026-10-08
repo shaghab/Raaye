@@ -13,12 +13,12 @@ import { TenantDbFactory } from '../persistence/tenant-db.factory';
 import type { TenantTx } from '../persistence/tenant-db';
 import { flowAssetVersion } from './flow-assets';
 import { MetaManagementClient } from './meta-management';
-import { resolveSecret } from './secrets';
+import { evaluateReadiness, type ReadinessIssue, type ReadinessOptions } from './readiness-rules';
 
 export interface ReadinessCheck {
   ok: boolean;
-  blockers: { code: string; message: string }[];
-  warnings: { code: string; message: string }[];
+  blockers: ReadinessIssue[];
+  warnings: ReadinessIssue[];
   connection: MessagingConnection | null;
   templates: TemplateBinding[];
   flows: FlowBinding[];
@@ -68,52 +68,26 @@ export class MessagingReadinessService {
     return connection;
   }
 
-  async check(ctx: OrgContext, options: { needResultsTemplate?: boolean; needFlows?: ('SINGLE_CHOICE' | 'MULTI_CHOICE' | 'PROFILE')[] } = {}): Promise<ReadinessCheck> {
+  /** Load the sender, its bindings and the organization, then apply the readiness rules for the caller's purpose. */
+  async check(ctx: OrgContext, options: ReadinessOptions = {}): Promise<ReadinessCheck> {
     const db = this.dbFactory.for(ctx);
     const connection = await this.connection(ctx);
-    const blockers: { code: string; message: string }[] = [];
-    const warnings: { code: string; message: string }[] = [];
     if (!connection) {
-      return { ok: false, blockers: [{ code: 'CONNECTION_MISSING', message: `No ${this.mode.toLowerCase()} messaging connection exists for this organization yet; save the sender configuration in Settings to create it` }], warnings, connection: null, templates: [], flows: [] };
+      const verdict = evaluateReadiness({ live: this.config.isLiveMessaging, mode: this.mode, connection: null, templates: [], flows: [], organization: null, options });
+      return { ...verdict, connection: null, templates: [], flows: [] };
     }
-    if (!connection.enabled) blockers.push({ code: 'CONNECTION_DISABLED', message: 'The messaging connection is disabled; enable it in Settings before any outreach' });
-    const [templates, flows, org] = await Promise.all([
+    const [templates, flows, organization] = await Promise.all([
       db.templateBinding.findMany({ where: { connectionId: connection.id } }),
       db.flowBinding.findMany({ where: { connectionId: connection.id } }),
-      db.organization.findUnique({ where: { id: ctx.organizationId } }),
+      db.organization.findUnique({ where: { id: ctx.organizationId }, select: { privacyUrl: true, supportContact: true, livePolicyReviewedAt: true, profileOnboardingEnabled: true } }),
     ]);
-    if (!this.config.isLiveMessaging) {
-      warnings.push({ code: 'MOCK_MODE', message: 'Messaging runs in mock mode: nothing is sent to WhatsApp and all synthetic contacts are accepted' });
-      return { ok: blockers.length === 0, blockers, warnings, connection, templates, flows };
-    }
-    if (connection.mode !== 'LIVE' || connection.provider !== 'META') blockers.push({ code: 'CONNECTION_NOT_LIVE', message: 'The enabled connection is not a live Meta connection' });
-    for (const [field, label] of [['phoneNumberId', 'Phone number ID'], ['wabaId', 'WABA ID'], ['appId', 'App ID'], ['graphVersion', 'Graph API version']] as const) {
-      if (!connection[field]) blockers.push({ code: 'CONNECTION_INCOMPLETE', message: `${label} is missing` });
-    }
-    for (const [field, label] of [['appSecretRef', 'App secret'], ['accessTokenRef', 'Access token'], ['verifyTokenRef', 'Webhook verify token']] as const) {
-      const ref = connection[field];
-      if (!ref) blockers.push({ code: 'SECRET_REF_MISSING', message: `${label} reference is missing` });
-      else if (!resolveSecret(ref)) blockers.push({ code: 'SECRET_UNRESOLVED', message: `${label} reference "${ref}" does not resolve to a configured secret` });
-    }
-    const invitation = templates.find((template) => template.purpose === 'SURVEY_INVITATION');
-    if (!invitation) blockers.push({ code: 'TEMPLATE_NOT_READY', message: 'No survey invitation template is bound' });
-    else if (invitation.status !== 'APPROVED') blockers.push({ code: 'TEMPLATE_NOT_READY', message: `Invitation template "${invitation.providerName}" is ${invitation.status}, not APPROVED` });
-    if (options.needResultsTemplate) {
-      const results = templates.find((template) => template.purpose === 'RESULTS_AVAILABLE');
-      if (!results || results.status !== 'APPROVED') blockers.push({ code: 'TEMPLATE_NOT_READY', message: 'The results-available template is not approved' });
-    }
-    for (const purpose of options.needFlows ?? []) {
-      const flow = flows.find((binding) => binding.purpose === purpose);
-      if (!flow || flow.status !== 'PUBLISHED' || !flow.providerFlowId) blockers.push({ code: 'FLOW_NOT_READY', message: `The ${purpose.toLowerCase().replace('_', '-')} Flow is not published and bound` });
-      else if (flow.assetVersion !== flowAssetVersion(purpose)) warnings.push({ code: 'FLOW_VERSION_DRIFT', message: `Published ${purpose} Flow uses asset ${flow.assetVersion}; repository asset is ${flowAssetVersion(purpose)}` });
-    }
-    if (!org?.privacyUrl || !org.supportContact) blockers.push({ code: 'ORGANIZATION_DETAILS_MISSING', message: 'Privacy URL and human support contact are required before live outreach' });
-    if (!org?.livePolicyReviewedAt) blockers.push({ code: 'POLICY_REVIEW_MISSING', message: 'Record the live messaging policy review attestation in Settings' });
-    return { ok: blockers.length === 0, blockers, warnings, connection, templates, flows };
+    const verdict = evaluateReadiness({ live: this.config.isLiveMessaging, mode: this.mode, connection, templates, flows, organization, options });
+    return { ...verdict, connection, templates, flows };
   }
 
+  /** The operator's full picture: every template and Flow, whatever the next operation needs. */
   async readiness(ctx: TenantContext): Promise<MessagingReadinessDto> {
-    const check = await this.check(ctx, { needFlows: ['SINGLE_CHOICE', 'MULTI_CHOICE', 'PROFILE'] });
+    const check = await this.check(ctx, { purpose: 'SETTINGS', needFlows: ['SINGLE_CHOICE', 'MULTI_CHOICE', 'PROFILE'] });
     return this.toDto(check);
   }
 

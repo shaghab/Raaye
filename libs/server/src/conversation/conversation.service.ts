@@ -5,9 +5,11 @@ import { AuditService } from '../audit/audit.service';
 import { CLOCK } from '../clock/clock.service';
 import type { SystemContext } from '../common/context';
 import { ConsentService } from '../contacts/consent.service';
+import { lockContact } from '../contacts/contact-lock';
 import type { JobHandler } from '../jobs/job-handler';
 import { JOB_PRIORITY, type ClaimedJob } from '../jobs/jobs.service';
 import { ActionBindingService } from '../messaging/action-bindings';
+import { resultsReplyKey } from '../messaging/dedupe';
 import { DeliveryService } from '../messaging/delivery.service';
 import { MessagePlanner } from '../messaging/planner';
 import type { RenderedMessage } from '../messaging/rendered';
@@ -90,8 +92,13 @@ export class ConversationService implements JobHandler {
       const now = this.clock.now();
       const phone = waIdToE164(event.senderIdentity);
       const found = phone ? await tx.contact.findFirst({ where: { OR: [{ phoneE164: phone }, { providerIdentity: event.senderIdentity }] } }) : null;
-      // A placeholder created to answer an unknown sender is not a real contact yet.
-      const contact = found && !isPlaceholder(found) ? found : null;
+      // A placeholder created to answer an unknown sender is not a real contact yet. A known contact
+      // is processed under its row lock, which consent decisions, archive, phone changes and the
+      // hand-off take too: the permission read here is what the latest decision left, and a
+      // withdrawal that arrives meanwhile waits, then cancels every reply queued below. A contact
+      // whose number changed while the lock was waited for is no longer this sender.
+      const locked = found && !isPlaceholder(found) ? await lockContact(tx, found.id) : null;
+      const contact = locked && (locked.phoneE164 === phone || locked.providerIdentity === event.senderIdentity) ? locked : null;
       let conversation: Conversation | null = null;
       const inboundAt = event.providerAt ?? event.receivedAt;
       if (contact) {
@@ -382,7 +389,7 @@ export class ConversationService implements JobHandler {
     const prefix = run.kind === 'TEST' ? `${copy.testLabel} ` : '';
     if (!existing) {
       await this.queue(s, 'COMMAND_REPLY', this.planner.introduction(s.orgCopy, run.revision.title as LocalizedText, run.revision.introduction as LocalizedText, run.revision.questions.length, run.revision.editWindowSeconds, run.revision.locale, prefix), `intro:${participation.id}`, { runId, participationId: participation.id, isTest: run.kind === 'TEST' });
-      if (s.org.profileOnboardingEnabled && s.conversation?.profileOfferState === 'NOT_OFFERED') {
+      if (s.org.profileOnboardingEnabled && s.conversation?.profileOfferState === 'NOT_OFFERED' && (await this.profileFlowReady(s))) {
         await s.tx.conversation.update({ where: { id: s.conversation.id }, data: { profileOfferState: 'OFFERED', profileOfferedAt: s.now } });
         const offer = await this.planner.profileOffer(s.tx, { organizationId: s.ctx.organizationId, contact: { id: contact.id, connectionId: s.connection.id }, mode: binding.mode, participationId: participation.id, org: s.orgCopy, expiresAt: run.closesAt, prefix });
         await this.queue(s, 'PROFILE_OFFER', offer, `profile-offer:${participation.id}`, { runId, participationId: participation.id, isTest: run.kind === 'TEST' });
@@ -441,8 +448,18 @@ export class ConversationService implements JobHandler {
   }
 
   private async menuSelect(s: Session, contact: Contact, binding: ActionBinding): Promise<string> {
-    const payload = (binding.payload as { menu?: string; page?: number; items?: Parameters<MessagePlanner['menu']>[1]['items'] } | null) ?? null;
+    const payload = (binding.payload as { menu?: string; page?: number; results?: boolean; items?: Parameters<MessagePlanner['menu']>[1]['items'] } | null) ?? null;
     if (payload?.menu === 'next' && payload.items) {
+      if (payload.results) {
+        // Every page of the results menu is subject to the respondent's current results permission.
+        if (!this.results.eligible(contact)) {
+          await this.queue(s, 'COMMAND_REPLY', this.planner.text(copy.notEligible), resultsReplyKey('denied', s.event.id));
+          return 'RESULTS_NOT_ELIGIBLE';
+        }
+        const page = await this.planner.menu(s.tx, { organizationId: s.ctx.organizationId, contact: { id: contact.id, connectionId: s.connection.id }, mode: binding.mode, body: copy.resultsMenu, buttonText: 'Results', items: payload.items, expiresAt: binding.expiresAt, page: payload.page ?? 1 });
+        await this.queue(s, 'COMMAND_REPLY', page, resultsReplyKey('menu', s.event.id));
+        return 'RESULTS_MENU_PAGE';
+      }
       const menu = await this.planner.menu(s.tx, { organizationId: s.ctx.organizationId, contact: { id: contact.id, connectionId: s.connection.id }, mode: binding.mode, body: copy.openSurveysMenu, buttonText: 'Choose', items: payload.items, expiresAt: binding.expiresAt, page: payload.page ?? 1 });
       await this.queue(s, 'COMMAND_REPLY', menu, `menu:${s.event.id}`);
       return 'MENU_PAGE';
@@ -549,6 +566,10 @@ export class ConversationService implements JobHandler {
       await this.replyText(s, 'Optional profile details are not collected by this organization.', 'profile');
       return 'PROFILE_DISABLED';
     }
+    if (!(await this.profileFlowReady(s))) {
+      await this.replyText(s, 'Optional profile details cannot be collected right now; please try again later.', 'profile');
+      return 'PROFILE_FLOW_UNAVAILABLE';
+    }
     const participation = participationId ? await s.tx.participation.findUnique({ where: { id: participationId }, include: PARTICIPATION_INCLUDE }) : await this.foreground(s);
     const isTest = participation?.run.kind === 'TEST';
     const flow = await this.planner.profileFlow(s.tx, {
@@ -562,6 +583,19 @@ export class ConversationService implements JobHandler {
     });
     await this.queue(s, 'PROFILE_FLOW', flow, `profile-flow:${s.event.id}`, { runId: participation?.runId ?? null, participationId: participation?.id ?? null, isTest: Boolean(isTest) });
     return 'PROFILE_FLOW_SENT';
+  }
+
+  /**
+   * Readiness refuses to launch while onboarding is enabled and the profile Flow is unpublished;
+   * this guards the live conversation against a Flow unpublished later, so no offer is made that
+   * the follow-up form could not fulfil. Mock connections render Flows locally.
+   */
+  private async profileFlowReady(s: Session): Promise<boolean> {
+    if (s.connection.mode !== 'LIVE') return true;
+    const flow = await s.tx.flowBinding.findFirst({ where: { connectionId: s.connection.id, purpose: 'PROFILE' }, select: { status: true, providerFlowId: true } });
+    if (flow?.status === 'PUBLISHED' && flow.providerFlowId) return true;
+    this.logger.warn({ connectionId: s.connection.id }, 'Profile onboarding skipped: the profile Flow is not published and bound');
+    return false;
   }
 
   private async skipProfile(s: Session, contact: Contact, participationId: string | null): Promise<string> {
@@ -614,8 +648,13 @@ export class ConversationService implements JobHandler {
   private async showResults(s: Session, contact: Contact): Promise<string> {
     const available = await this.results.availableFor(s.tx, contact.id);
     if (available.length === 0) {
-      await this.replyText(s, copy.resultsNone, 'results');
+      await this.queue(s, 'COMMAND_REPLY', this.planner.text(copy.resultsNone), resultsReplyKey('none', s.event.id));
       return 'RESULTS_NONE';
+    }
+    // Permission before anything is built: a respondent without current results permission learns nothing, not even the titles.
+    if (!this.results.eligible(contact)) {
+      await this.queue(s, 'COMMAND_REPLY', this.planner.text(copy.notEligible), resultsReplyKey('denied', s.event.id));
+      return 'RESULTS_NOT_ELIGIBLE';
     }
     if (available.length === 1) return this.results.deliver(s.tx, s.ctx, contact, s.connection, available[0].snapshotId, s.event.id);
     const menu = await this.planner.menu(s.tx, {
@@ -627,7 +666,7 @@ export class ConversationService implements JobHandler {
       items: available.map((item) => ({ label: item.title, purpose: 'VIEW_RESULTS' as const, snapshotId: item.snapshotId })),
       expiresAt: new Date(s.now.getTime() + LIMITS.actionBindingDays * 86_400_000),
     });
-    await this.queue(s, 'COMMAND_REPLY', menu, `results-menu:${s.event.id}`);
+    await this.queue(s, 'COMMAND_REPLY', menu, resultsReplyKey('menu', s.event.id));
     return 'RESULTS_MENU';
   }
 

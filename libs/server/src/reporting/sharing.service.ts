@@ -6,6 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import { CLOCK } from '../clock/clock.service';
 import type { TenantContext } from '../common/context';
 import { DomainError, forbidden, notFound } from '../common/errors';
+import { cancelPendingMessages } from '../contacts/outreach-cancellation';
 import { JOB_PRIORITY } from '../jobs/jobs.service';
 import { DeliveryService } from '../messaging/delivery.service';
 import { MessagePlanner } from '../messaging/planner';
@@ -113,7 +114,7 @@ export class SharingService {
     const existing = await db.resultSnapshot.findUnique({ where: { organizationId_runId: { organizationId: ctx.organizationId, runId: run.id } } });
     if (existing) return this.status(ctx, surveyId);
     this.reporting.assertRunClosed(run);
-    const readiness = await this.readiness.check(ctx, { needResultsTemplate: true });
+    const readiness = await this.readiness.check(ctx, { purpose: 'RESULTS' });
     if (!readiness.ok || !readiness.connection) throw new DomainError('TEMPLATE_NOT_READY', 'Messaging is not ready to broadcast results', { blockers: readiness.blockers });
     const { aggregate, shareable, suppressed } = await this.buildAggregate(ctx, surveyId);
     if (shareable === 0) throw new DomainError('RESULTS_INSUFFICIENT_SAMPLE', 'Every question is below the minimum of five respondents; nothing can be shared');
@@ -184,7 +185,13 @@ export class SharingService {
     };
   }
 
-  /** Revoke in-app access; WhatsApp text already delivered cannot be retracted by Raaye. */
+  /**
+   * Revoke in-app access and stop the notices still queued: their "View results" control is
+   * invalid from now on, so sending them would only mislead. WhatsApp text already delivered
+   * cannot be retracted by Raaye. A notice a worker is handing over right now holds a share lock
+   * on the snapshot, so this revocation waits for that hand-off and the policy recheck inside the
+   * hand-off sees a revocation that committed first.
+   */
   async revoke(ctx: TenantContext, surveyId: string): Promise<ResultSharingDto> {
     if (ctx.role !== 'ADMIN') throw forbidden('Only Admins can revoke shared results');
     const db = this.dbFactory.for(ctx);
@@ -193,9 +200,16 @@ export class SharingService {
     const snapshot = await db.resultSnapshot.findUnique({ where: { organizationId_runId: { organizationId: ctx.organizationId, runId: run.id } } });
     if (!snapshot) throw notFound('Result snapshot');
     await db.$transaction(async (tx) => {
-      await tx.resultSnapshot.update({ where: { id: snapshot.id }, data: { revokedAt: this.clock.now(), revokedByUserId: ctx.userId, broadcastState: 'REVOKED' } });
-      await tx.actionBinding.updateMany({ where: { snapshotId: snapshot.id, expiresAt: { gt: this.clock.now() } }, data: { expiresAt: this.clock.now() } });
-      await this.audit.record(ctx, { action: 'results.revoked', resourceType: 'survey', resourceId: surveyId, metadata: { snapshotId: snapshot.id } }, tx);
+      // Serialized with every hand-off of this snapshot's messages, which hold a share lock on the row.
+      await tx.$queryRaw`SELECT id FROM result_snapshots WHERE id = ${snapshot.id}::uuid AND organization_id = ${ctx.organizationId}::uuid FOR UPDATE`;
+      const now = this.clock.now();
+      await tx.resultSnapshot.update({ where: { id: snapshot.id }, data: { revokedAt: now, revokedByUserId: ctx.userId, broadcastState: 'REVOKED' } });
+      await tx.actionBinding.updateMany({ where: { snapshotId: snapshot.id, expiresAt: { gt: now } }, data: { expiresAt: now } });
+      const canceled = await cancelPendingMessages(tx, { snapshotId: snapshot.id, kind: 'RESULTS_INVITATION' }, 'RESULTS_REVOKED', now);
+      if (canceled.messageIds.length > 0) {
+        await tx.resultRecipient.updateMany({ where: { snapshotId: snapshot.id, invitationMessageId: { in: canceled.messageIds } }, data: { accessState: 'SUPPRESSED', suppressionReason: 'RESULTS_REVOKED' } });
+      }
+      await this.audit.record(ctx, { action: 'results.revoked', resourceType: 'survey', resourceId: surveyId, metadata: { snapshotId: snapshot.id, canceledInvitations: canceled.messageIds.length, canceledJobs: canceled.jobs } }, tx);
     });
     return this.status(ctx, surveyId);
   }
