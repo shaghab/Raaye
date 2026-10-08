@@ -287,3 +287,11 @@ Branch restarted from the merged `main` (d39ca74). Checks run on the working tre
 | Spec | `MVP.md` `SurveyRun` row states at most one non-canceled LIVE run per survey with canceled runs retained; the scheduling test already unschedules, edits and reschedules the same survey. |
 
 Not run: live Meta verification remains external as before.
+
+## Review loop for pull request #27 (launch retries, test sends, invitation deadline, live-run slot)
+
+| Round | Commit | Outcome |
+| --- | --- | --- |
+| 1 (pull request opened) | 4efe564 | No findings: the review completed with no threads, no review and no comment. |
+
+Nothing to resolve. On 22c495f (4efe564 adds only `plan/`): `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 81, integration 14 suites / 96 tests, WhatsApp assets 8 checks, production builds) and `pnpm test:e2e` passed (9 journeys). The commits that record the review state change only `plan/` files and were not sent for a further round.

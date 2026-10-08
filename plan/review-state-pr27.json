@@ -16,12 +16,15 @@
       "round": 1,
       "headSha": "4efe564",
       "requestedAt": "2026-10-08T07:19:08.951342+00:00",
-      "status": "running",
-      "trigger": "pull request opened (Codex reviews new pull requests automatically)"
+      "status": "completed",
+      "trigger": "pull request opened (Codex reviews new pull requests automatically)",
+      "reviewedAt": "2026-10-08T07:22:25Z",
+      "findings": 0,
+      "outcome": "No findings (review completed with no threads, no review and no comment; the summary comment 6054751499 shows it completed on 4efe564)"
     }
   ],
   "processedFindings": [],
   "issues": [],
   "blockers": [],
-  "updatedAt": "2026-10-08T07:19:08.951342+00:00"
+  "updatedAt": "2026-10-08T07:24:51.061440+00:00"
 }
