@@ -97,13 +97,20 @@ describe('participant conversation engine (R15-R22, R31-R42)', () => {
     expect(participation.state).toBe('STARTED');
     expect(participation.analysisProfile).toBeNull();
 
+    // Staff-managed data that a participant's self-report must never overwrite (R19): a tag and a verified membership.
+    const volunteer = await t.prisma.tag.create({ data: { organizationId: orgId, name: 'Volunteer', normalizedName: 'volunteer' } });
+    await t.prisma.contactTag.create({ data: { organizationId: orgId, contactId: ayesha, tagId: volunteer.id } });
+    await t.prisma.contact.update({ where: { id: ayesha }, data: { membership: 'NON_MEMBER', membershipSource: 'ADMIN' } });
+
     await tapLabel(ayesha, 'Add details');
     const profileFlow = await last(ayesha, (message) => message.kind === 'PROFILE_FLOW');
     expect(profileFlow.flow?.purpose).toBe('PROFILE');
     await sim('flow', { contactId: ayesha, messageId: profileFlow.id, flowToken: profileFlow.flow?.token, profile: { city: 'Karachi', gender: 'WOMAN', ageBand: 'AGE_25_34', membership: 'MEMBER' } }).expect(200);
     await drainJobs(t);
     const contact = await t.prisma.contact.findUniqueOrThrow({ where: { id: ayesha } });
-    expect(contact).toMatchObject({ city: 'Karachi', gender: 'WOMAN', ageBand: 'AGE_25_34', selfReportedMembership: 'MEMBER', membership: 'UNKNOWN' });
+    // The claim to be a member lands in the self-reported field; the staff-verified membership and the tag are untouched.
+    expect(contact).toMatchObject({ city: 'Karachi', gender: 'WOMAN', ageBand: 'AGE_25_34', selfReportedMembership: 'MEMBER', membership: 'NON_MEMBER', membershipSource: 'ADMIN' });
+    expect((await t.prisma.contactTag.findMany({ where: { contactId: ayesha } })).map((link) => link.tagId)).toEqual([volunteer.id]);
     messages = await outbound(ayesha);
     expect(messages.map((message) => message.kind).slice(-2)).toEqual(['COMMAND_REPLY', 'QUESTION']);
     const q1 = messages[messages.length - 1];
@@ -115,7 +122,7 @@ describe('participant conversation engine (R15-R22, R31-R42)', () => {
     expect(q2.text).toContain('Response recorded.');
     expect(q2.text).toContain('Question 2 of 5');
     const snapshot = await t.prisma.participation.findUniqueOrThrow({ where: { id: participation.id } });
-    expect(snapshot.analysisProfile).toMatchObject({ city: 'Karachi', gender: 'WOMAN', selfReportedMembership: 'MEMBER', membership: 'UNKNOWN' });
+    expect(snapshot.analysisProfile).toMatchObject({ city: 'Karachi', gender: 'WOMAN', selfReportedMembership: 'MEMBER', membership: 'NON_MEMBER' });
     expect(snapshot.currentQuestionId).not.toBeNull();
 
     await tapLabel(ayesha, 'Indifferent');
