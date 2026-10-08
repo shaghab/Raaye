@@ -2,7 +2,7 @@
 
 Raaye lets an organization ask structured questions through WhatsApp, collect permission-based answers, and read accurate, traceable results from one dashboard. This repository contains the complete locally runnable MVP described in `MVP.md`: an Angular dashboard, a NestJS API and worker, PostgreSQL persistence with Prisma migrations, a Firebase Authentication emulator for staff sign-in, a realistic WhatsApp participant simulator, and a real WhatsApp Cloud API adapter with a documented setup path.
 
-> **Identifiable, not anonymous.** Authorized organization Admins can link answers to contacts. Participants are told this in every invitation. Aggregate views, cohort thresholds and export restrictions are disclosure controls, not an anonymity guarantee.
+> **Identifiable, not anonymous.** Authorized organization Admins can link answers to contacts. Participants are told this in the participant notice they agree to (versioned, and recorded with their consent evidence) and in the checked-in invitation template; the shorter invitation shown by the local preview and simulator does not repeat it. Aggregate views, cohort thresholds and export restrictions are disclosure controls, not an anonymity guarantee.
 
 ## Quick start (Docker)
 
@@ -33,7 +33,7 @@ What runs:
 | `db` | 127.0.0.1:5432 | PostgreSQL 16 (`raaye`/`raaye`) |
 | `bootstrap` | one-shot | Applies migrations and runs the idempotent synthetic seed |
 
-Restarting (`docker compose restart` or `up` again) keeps every user-created record; the seed only adds what is missing. `docker compose down -v` deletes the database volume.
+Restarting (`docker compose restart` or `up` again) keeps every user-created record. The seed adds what is missing, except that it resets the four demo accounts (role, active membership and status, display name and Firebase uid) to their seeded values, so a role change or revocation made on a demo account is undone on the next start. `docker compose down -v` deletes the database volume.
 
 The seeded demo (organization "Public Interest Law Association of Pakistan (demo)") contains 28 synthetic contacts covering every demographic field, consent state and group/tag, plus:
 
@@ -102,7 +102,7 @@ libs/domain         Pure domain rules (edit windows, consent, selections, aggreg
 libs/server         NestJS modules: persistence, auth, contacts, surveys, jobs, messaging, conversation, reporting, seed
 prisma              Schema and migrations
 whatsapp            Flow JSON assets, response fixtures and template specifications
-fixtures/imports    CSV/XLSX import fixtures (valid and invalid)
+fixtures/imports    CSV import fixtures (valid and invalid); the XLSX tests build their workbooks in code
 infra               Dockerfiles, nginx, Firebase emulator config
 scripts             dev, verify, seed/CLI runner, db reset, Docker smoke, WhatsApp validation
 docs                DECISIONS.md and operational notes
