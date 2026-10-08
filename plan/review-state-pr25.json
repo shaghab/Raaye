@@ -52,8 +52,17 @@
     {
       "round": 5,
       "headSha": "23cb902",
+      "status": "completed",
+      "trigger": "@codex review comment 6051426551",
+      "reviewedAt": "2026-10-08T03:18:53Z",
+      "findings": 2,
+      "outcome": "2 P2, both consequences of the round-3/4 fixes: the RESULTS command built a menu for a respondent without current results permission; a results-only withdrawal left a queued results menu. Fixed in 8da35c4"
+    },
+    {
+      "round": 6,
+      "headSha": "7c3c206",
       "status": "running",
-      "trigger": "@codex review comment 6051426551"
+      "trigger": "@codex review comment"
     }
   ],
   "processedFindings": [
@@ -137,9 +146,33 @@
       "commit": "23cb902",
       "resolved": true,
       "replyCommentId": 4214217924
+    },
+    {
+      "commentId": 4214236876,
+      "threadId": "PRRT_kwDOU--Sjc6qLfr2",
+      "priority": "P2",
+      "file": "libs/server/src/conversation/results-access.service.ts",
+      "title": "Check results consent before constructing the menu",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "8da35c4",
+      "resolved": true,
+      "replyCommentId": 4214306530
+    },
+    {
+      "commentId": 4214236879,
+      "threadId": "PRRT_kwDOU--Sjc6qLfr3",
+      "priority": "P2",
+      "file": "libs/server/src/contacts/outreach-cancellation.ts",
+      "title": "Cancel queued result menus on results withdrawal",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "8da35c4",
+      "resolved": true,
+      "replyCommentId": 4214306653
     }
   ],
   "issues": [],
   "blockers": [],
-  "updatedAt": "2026-10-08T03:15:03.649379+00:00"
+  "updatedAt": "2026-10-08T03:34:01.993249+00:00"
 }
