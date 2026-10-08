@@ -308,11 +308,6 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     const status = (await request(t.server).get(`/api/v1/surveys/${surveyId}/result-sharing`).set('Authorization', manager.authorization).expect(200)).body;
     expect(status.recipients.byState).toEqual({ VIEWED: 3 });
     expect(status.recipients.byDelivery).toMatchObject({ FAILED: 1 });
-    const revoked = (await request(t.server).post(`/api/v1/surveys/${surveyId}/result-sharing/revoke`).set('Authorization', admin.authorization).expect(200)).body;
-    expect(revoked.snapshot.revokedAt).not.toBeNull();
-    await sim('text', { contactId: people['P1'], text: 'RESULTS' }).expect(200);
-    await drainJobs(t);
-    expect([...(await outbound(people['P1']))].pop()?.text).toContain('No shared results');
   });
 
   it('revoking cancels the result notices still queued and a revoked snapshot is refused at send time (R51, R53)', async () => {
@@ -334,15 +329,55 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     expect(shared.snapshot).toMatchObject({ eligibleCount: 4, suppressedCount: 1 });
     const queued = await t.prisma.message.findMany({ where: { kind: 'RESULTS_INVITATION', snapshotId }, orderBy: { createdAt: 'asc' } });
     expect(queued.map((message) => message.state)).toEqual(['PENDING', 'PENDING', 'PENDING', 'PENDING']);
+    const noticeOf = (name: string) => {
+      const notice = queued.find((message) => message.contactId === people[name]);
+      if (!notice) throw new Error(`no notice for ${name}`);
+      return notice;
+    };
+    const runner = t.app.get(JobRunner);
+    // Process one inbound message and send only the replies it produced, leaving the queued notices untouched.
+    const converse = async (name: string, text: string) => {
+      const { eventId } = (await sim('text', { contactId: people[name], text }).expect(200)).body as { eventId: string };
+      expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `inbound:${eventId}` } })).id)).toBe('DONE');
+      for (const reply of await t.prisma.message.findMany({ where: { contactId: people[name], state: 'PENDING', kind: { not: 'RESULTS_INVITATION' } } })) {
+        expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${reply.id}` } })).id)).toBe('DONE');
+      }
+      return [...(await outbound(people[name]))].pop();
+    };
+    const withdraw = (name: string, scopes: string[], evidenceAt: string) =>
+      request(t.server).post(`/api/v1/contacts/${people[name]}/consent-events`).set('Authorization', manager.authorization).send({ scopes, type: 'WITHDRAWN', evidenceAt, evidenceReference: 'Call' }).expect(201);
     // P6 withdraws survey invitations only: the queued results notice and its job stay, results permission is intact.
-    await request(t.server).post(`/api/v1/contacts/${people['P6']}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_INVITATIONS'], type: 'WITHDRAWN', evidenceAt: '2026-10-09T12:00:00Z', evidenceReference: 'Call' }).expect(201);
-    const p6Notice = queued.find((message) => message.contactId === people['P6']);
-    if (!p6Notice) throw new Error('no notice for P6');
-    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: p6Notice.id } })).state).toBe('PENDING');
-    expect((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${p6Notice.id}` } })).status).toBe('PENDING');
+    await withdraw('P6', ['SURVEY_INVITATIONS'], '2026-10-09T12:00:00Z');
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: noticeOf('P6').id } })).state).toBe('PENDING');
+    expect((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${noticeOf('P6').id}` } })).status).toBe('PENDING');
+    // P1 has two shared surveys, so RESULTS queues a menu; an invitation-only withdrawal while it is queued leaves
+    // the menu, its View results controls and the queued notice alone.
+    const { eventId: menuEvent } = (await sim('text', { contactId: people['P1'], text: 'RESULTS' }).expect(200)).body as { eventId: string };
+    expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `inbound:${menuEvent}` } })).id)).toBe('DONE');
+    const menu = await t.prisma.message.findUniqueOrThrow({ where: { dedupeKey: `results-menu:${menuEvent}` } });
+    expect(menu.state).toBe('PENDING');
+    await withdraw('P1', ['SURVEY_INVITATIONS'], '2026-10-09T12:30:00Z');
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: menu.id } })).state).toBe('PENDING');
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: noticeOf('P1').id } })).state).toBe('PENDING');
+    expect(await t.prisma.actionBinding.count({ where: { contactId: people['P1'], purpose: 'VIEW_RESULTS', expiresAt: { gt: t.clock.now() } } })).toBeGreaterThanOrEqual(2);
+    expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${menu.id}` } })).id)).toBe('DONE');
+    const sentMenu = [...(await outbound(people['P1']))].pop();
+    expect(sentMenu).toMatchObject({ kind: 'COMMAND_REPLY', state: 'ACCEPTED' });
+    expect(sentMenu?.controls).toHaveLength(2);
+    // P7 withdraws results permission while the notice is queued: the notice is canceled and the recipient marked;
+    // valid new evidence restores access to the already-shared results without another notice.
+    await withdraw('P7', ['SURVEY_RESULTS'], '2026-10-09T13:00:00Z');
+    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: noticeOf('P7').id } })).toMatchObject({ state: 'CANCELED', suppressionReason: 'CONTACT_WITHDRAWN' });
+    expect((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${noticeOf('P7').id}` } })).status).toBe('CANCELED');
+    expect(await t.prisma.resultRecipient.findFirstOrThrow({ where: { snapshotId, contactId: people['P7'] } })).toMatchObject({ accessState: 'SUPPRESSED', suppressionReason: 'CONTACT_WITHDRAWN' });
+    expect((await converse('P7', 'RESULTS'))?.text).toContain('no longer available');
+    expect((await outbound(people['P7'])).filter((message) => message.kind === 'RESULTS_CONTENT')).toHaveLength(0);
+    await request(t.server).post(`/api/v1/contacts/${people['P7']}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_RESULTS'], type: 'GRANTED', evidenceAt: '2026-10-09T14:00:00Z', evidenceReference: 'Signed form', reviewedNewEvidence: true }).expect(201);
+    expect((await converse('P7', 'RESULTS'))?.kind).toBe('RESULTS_CONTENT');
+    expect((await outbound(people['P7'])).filter((message) => message.kind === 'RESULTS_CONTENT' && message.state === 'ACCEPTED').length).toBeGreaterThanOrEqual(1);
+    expect((await t.prisma.resultRecipient.findFirstOrThrow({ where: { snapshotId, contactId: people['P7'] } })).accessState).toBe('VIEWED');
     // A revocation that commits while a worker is handing a notice over: the hand-off holds a share lock on the
     // snapshot, so the revocation waits for the worker's claim and the policy recheck inside the hand-off sees it.
-    const runner = t.app.get(JobRunner);
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     let release: () => void = () => undefined;
     const released = new Promise<void>((resolve) => {
@@ -361,8 +396,8 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
       if (free.length === 0) break;
       await sleep(10);
     }
-    const firstJob = await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${queued[0].id}` } });
-    const handoff = runner.runJob(firstJob.id);
+    const raced = noticeOf('P8');
+    const handoff = runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${raced.id}` } })).id);
     for (let i = 0; i < 300; i += 1) {
       const [row] = await t.prisma.$queryRaw<{ waiting: number }[]>`SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
       if ((row?.waiting ?? 0) > 0) break;
@@ -371,29 +406,33 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     release();
     await revocation;
     expect(await handoff).toBe('DONE');
-    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: queued[0].id } })).toMatchObject({ state: 'SUPPRESSED', suppressionReason: 'RESULTS_REVOKED' });
-    expect(await t.prisma.messageAttempt.findMany({ where: { messageId: queued[0].id } })).toEqual([expect.objectContaining({ outcome: 'FAILED', errorCode: 'RESULTS_REVOKED' })]);
-    expect(await t.prisma.resultRecipient.findFirstOrThrow({ where: { invitationMessageId: queued[0].id } })).toMatchObject({ accessState: 'SUPPRESSED', suppressionReason: 'RESULTS_REVOKED' });
+    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: raced.id } })).toMatchObject({ state: 'SUPPRESSED', suppressionReason: 'RESULTS_REVOKED' });
+    expect(await t.prisma.messageAttempt.findMany({ where: { messageId: raced.id } })).toEqual([expect.objectContaining({ outcome: 'FAILED', errorCode: 'RESULTS_REVOKED' })]);
+    expect(await t.prisma.resultRecipient.findFirstOrThrow({ where: { invitationMessageId: raced.id } })).toMatchObject({ accessState: 'SUPPRESSED', suppressionReason: 'RESULTS_REVOKED' });
     // A notice a worker picks up once the revocation is committed is refused before any attempt.
-    const secondJob = await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${queued[1].id}` } });
-    expect(await runner.runJob(secondJob.id)).toBe('DONE');
-    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: queued[1].id } })).toMatchObject({ state: 'SUPPRESSED', suppressionReason: 'RESULTS_REVOKED' });
-    expect(await t.prisma.messageAttempt.count({ where: { messageId: queued[1].id } })).toBe(0);
-    // The Admin's revocation cancels what is still queued, with its job, and records it on the recipient.
+    const late = noticeOf('P6');
+    expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${late.id}` } })).id)).toBe('DONE');
+    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: late.id } })).toMatchObject({ state: 'SUPPRESSED', suppressionReason: 'RESULTS_REVOKED' });
+    expect(await t.prisma.messageAttempt.count({ where: { messageId: late.id } })).toBe(0);
+    // The Admin's revocation cancels what is still queued (P1's notice), with its job, and records it on the recipient.
     const revoked = (await request(t.server).post(`/api/v1/surveys/${id}/result-sharing/revoke`).set('Authorization', admin.authorization).expect(200)).body;
     expect(revoked.snapshot.broadcastState).toBe('REVOKED');
-    for (const message of queued.slice(2)) {
-      expect(await t.prisma.message.findUniqueOrThrow({ where: { id: message.id } })).toMatchObject({ state: 'CANCELED', deliveryState: 'CANCELED', suppressionReason: 'RESULTS_REVOKED' });
-      expect((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${message.id}` } })).status).toBe('CANCELED');
-    }
-    expect(revoked.recipients.byState).toEqual({ SUPPRESSED: 4 });
+    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: noticeOf('P1').id } })).toMatchObject({ state: 'CANCELED', deliveryState: 'CANCELED', suppressionReason: 'RESULTS_REVOKED' });
+    expect((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${noticeOf('P1').id}` } })).status).toBe('CANCELED');
+    expect(revoked.recipients.byState).toEqual({ SUPPRESSED: 3, VIEWED: 1 });
     const audit = await t.prisma.auditEvent.findFirst({ where: { organizationId: orgId, action: 'results.revoked', resourceId: id } });
-    expect(audit?.metadata).toMatchObject({ snapshotId, canceledInvitations: 2, canceledJobs: 2 });
+    expect(audit?.metadata).toMatchObject({ snapshotId, canceledInvitations: 1, canceledJobs: 1 });
     await drainJobs(t);
-    // Nothing of this broadcast ever left: two notices refused at send time, the rest canceled before a worker saw them.
-    const states = (await t.prisma.message.findMany({ where: { snapshotId }, select: { state: true } })).map((message) => message.state).sort();
+    // No notice of this broadcast ever left: two refused at send time, two canceled before a worker saw them.
+    const states = (await t.prisma.message.findMany({ where: { snapshotId, kind: 'RESULTS_INVITATION' }, select: { state: true } })).map((message) => message.state).sort();
     expect(states).toEqual(['CANCELED', 'CANCELED', 'SUPPRESSED', 'SUPPRESSED']);
-    expect(await t.prisma.messageAttempt.count({ where: { message: { snapshotId }, outcome: { not: 'FAILED' } } })).toBe(0);
+    expect(await t.prisma.messageAttempt.count({ where: { message: { snapshotId, kind: 'RESULTS_INVITATION' }, outcome: { not: 'FAILED' } } })).toBe(0);
+    // Revoking the first survey's snapshot as well leaves P1 with nothing to list.
+    const revokedFirst = (await request(t.server).post(`/api/v1/surveys/${surveyId}/result-sharing/revoke`).set('Authorization', admin.authorization).expect(200)).body;
+    expect(revokedFirst.snapshot.revokedAt).not.toBeNull();
+    await sim('text', { contactId: people['P1'], text: 'RESULTS' }).expect(200);
+    await drainJobs(t);
+    expect([...(await outbound(people['P1']))].pop()?.text).toContain('No shared results');
   });
 
   it('retention cleanup removes staged imports, raw webhooks and quarantine without touching answers (R56)', async () => {

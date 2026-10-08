@@ -18,10 +18,15 @@ export class ResultsAccessService {
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
-  /** Snapshots already shared with this respondent and not revoked. */
+  /**
+   * Snapshots already shared with this respondent and not revoked. The recipient row records the
+   * notice's outcome; access follows the respondent's current results permission, which `deliver`
+   * rechecks, so a permission withdrawn while the notice was queued and validly re-granted later
+   * restores access without another notice.
+   */
   async availableFor(tx: TenantTx, contactId: string): Promise<{ snapshotId: string; title: string }[]> {
     const recipients = await tx.resultRecipient.findMany({
-      where: { contactId, accessState: { in: ['INVITED', 'VIEWED'] }, snapshot: { revokedAt: null } },
+      where: { contactId, snapshot: { revokedAt: null } },
       include: { snapshot: { include: { run: { include: { revision: { select: { title: true, locale: true } } } } } } },
       orderBy: { createdAt: 'desc' },
       take: 20,

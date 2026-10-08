@@ -29,19 +29,22 @@ export async function cancelPendingMessages(tx: TenantTx, where: Prisma.MessageW
 
 export type WithdrawnScope = 'SURVEY_INVITATIONS' | 'SURVEY_RESULTS';
 const RESULTS_KINDS = ['RESULTS_INVITATION', 'RESULTS_CONTENT'] as const;
+/** Messages that drive survey participation; replies to what the participant just sent (command replies, results menus) are not among them. */
+const SURVEY_KINDS = ['INVITATION', 'QUESTION', 'ACKNOWLEDGEMENT', 'PROFILE_OFFER', 'PROFILE_FLOW', 'ENROLLMENT'] as const;
 
 /**
  * Cancel every pending proactive message, its job and open invitations for a contact, for the
- * permission scopes that were withdrawn (both by default: archive, phone change, STOP). The two
- * scopes are independent: withdrawing survey invitations alone leaves result notices, result
- * content and their View results controls untouched, and withdrawing results alone touches only
- * those.
+ * permission scopes that were withdrawn (both by default: archive, phone change, STOP, which
+ * cancel everything but the opt-out acknowledgement). The two scopes are independent:
+ * withdrawing survey invitations alone cancels the survey participation messages and controls
+ * and leaves result notices, result content, the results menu and View results controls
+ * untouched; withdrawing results alone touches only the result messages and controls.
  */
 export async function cancelPendingOutreach(tx: TenantTx, contactId: string, reason: string, now: Date, scopes: readonly WithdrawnScope[] = ['SURVEY_INVITATIONS', 'SURVEY_RESULTS']): Promise<CancellationResult> {
   const invitations = scopes.includes('SURVEY_INVITATIONS');
   const results = scopes.includes('SURVEY_RESULTS');
   if (!invitations && !results) return { messages: 0, jobs: 0, invitations: 0 };
-  const kind: Prisma.MessageWhereInput['kind'] = invitations && results ? { not: 'OPT_OUT_ACK' } : invitations ? { notIn: ['OPT_OUT_ACK', ...RESULTS_KINDS] } : { in: [...RESULTS_KINDS] };
+  const kind: Prisma.MessageWhereInput['kind'] = invitations && results ? { not: 'OPT_OUT_ACK' } : invitations ? { in: [...SURVEY_KINDS] } : { in: [...RESULTS_KINDS] };
   const { messageIds, jobs } = await cancelPendingMessages(tx, { contactId, kind }, reason, now);
   if (results && messageIds.length > 0) {
     await tx.resultRecipient.updateMany({ where: { invitationMessageId: { in: messageIds }, accessState: { in: ['PENDING', 'INVITED'] } }, data: { accessState: 'SUPPRESSED', suppressionReason: reason } });
