@@ -273,3 +273,17 @@ Not run: live Meta verification remains external as before.
 | 2 | e85c60c (reviewed at b31dd72, which adds only `plan/`) | No findings. |
 
 The one review thread is resolved. On e85c60c: `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 81, integration 14 suites / 93 tests, WhatsApp assets 8 checks, production builds) and `pnpm test:e2e` passed (9 journeys). The commits that record the review state change only `plan/` files and were not sent for a further round.
+
+## Follow-up: launch retries, test sends, invitation deadline, live-run slot (issues #7, #17, #23, #2)
+
+Branch restarted from the merged `main` (d39ca74). Checks run on the working tree that became this pull request:
+
+| Check | Result |
+| --- | --- |
+| `pnpm verify` | passed: lint 7 projects, strict typecheck 7 projects, unit tests 81 (contracts 4, domain 37, server 34, web 6), integration 14 suites / 96 tests, WhatsApp assets 8 checks, production builds (api, worker, web) |
+| `pnpm test:e2e` | passed: 9 Playwright journeys |
+| New integration coverage | `surveys-launch.int-spec.ts` "concurrent launch retries with the same idempotency key both receive the launch" (two identical requests queued on the held survey row: both 200 with the same live run, one run and one key record; the same key with another request is `IDEMPOTENCY_CONFLICT`, another key and no key are `SURVEY_STATE_INVALID`); "a draft edit and a test send of the same survey serialize: the test run never mixes two revisions" (edit first: the test send is refused with `SURVEY_STATE_INVALID` and no test run exists; test send first: the run keeps the two-question revision, the edit moves the draft to revision 2 with five questions, the test invitation renders the validated content); `auth-membership.int-spec.ts` "an invitation that expires while its acceptance waits for the invitee's user row is refused" (the user row held by another transaction, the clock advanced past expiry during the wait: 422, invitation untouched, no membership; a fresh invitation accepted afterwards) |
+| Each test against its fix reverted | Without the replay after a failed guard, the retry test fails (the second request is refused). With the revision guard removed from `createTestRun`, the edit-versus-test test fails (the test run is created after the edit, 201 instead of 409). With the clock read before the user-row upsert, the invitation test fails (200 and a membership instead of 422). All pass with the fixes. |
+| Spec | `MVP.md` `SurveyRun` row states at most one non-canceled LIVE run per survey with canceled runs retained; the scheduling test already unschedules, edits and reschedules the same survey. |
+
+Not run: live Meta verification remains external as before.
