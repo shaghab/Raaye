@@ -34,8 +34,17 @@
     {
       "round": 3,
       "headSha": "de5026f",
+      "status": "completed",
+      "trigger": "@codex review comment 6051145885",
+      "reviewedAt": "2026-10-08T02:51:20Z",
+      "findings": 2,
+      "outcome": "2 P2, both consequences of this change: a results re-grant could not restore access to a shared snapshot; an invitation-only withdrawal canceled a queued results menu. Fixed in 9f0cd89"
+    },
+    {
+      "round": 4,
+      "headSha": "9f0cd89",
       "status": "running",
-      "trigger": "@codex review comment 6051145885"
+      "trigger": "@codex review comment 6051280722"
     }
   ],
   "processedFindings": [
@@ -83,9 +92,33 @@
       "commit": "de5026f",
       "resolved": true,
       "replyCommentId": 4214090806
+    },
+    {
+      "commentId": 4214105933,
+      "threadId": "PRRT_kwDOU--Sjc6qLLlK",
+      "priority": "P2",
+      "file": "libs/server/src/conversation/results-access.service.ts",
+      "title": "Restore snapshot access after a new results grant",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "9f0cd89",
+      "resolved": true,
+      "replyCommentId": 4214152652
+    },
+    {
+      "commentId": 4214105941,
+      "threadId": "PRRT_kwDOU--Sjc6qLLlS",
+      "priority": "P2",
+      "file": "libs/server/src/contacts/outreach-cancellation.ts",
+      "title": "Preserve queued results menus on invitation-only withdrawal",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "9f0cd89",
+      "resolved": true,
+      "replyCommentId": 4214152776
     }
   ],
   "issues": [],
   "blockers": [],
-  "updatedAt": "2026-10-08T02:48:26.789782+00:00"
+  "updatedAt": "2026-10-08T03:01:17.757148+00:00"
 }
