@@ -38,14 +38,18 @@ const RESULTS_KINDS = ['RESULTS_INVITATION', 'RESULTS_CONTENT'] as const;
  * withdrawing survey invitations alone cancels every queued message about surveys (invitations,
  * questions, acknowledgements, introductions and menus, profile offers and forms, enrollment)
  * and their controls, and leaves result notices, result content, replies about results and
- * View results controls untouched; withdrawing results alone touches only those.
+ * View results controls untouched; withdrawing results alone cancels exactly those.
  */
 export async function cancelPendingOutreach(tx: TenantTx, contactId: string, reason: string, now: Date, scopes: readonly WithdrawnScope[] = ['SURVEY_INVITATIONS', 'SURVEY_RESULTS']): Promise<CancellationResult> {
   const invitations = scopes.includes('SURVEY_INVITATIONS');
   const results = scopes.includes('SURVEY_RESULTS');
   if (!invitations && !results) return { messages: 0, jobs: 0, invitations: 0 };
   const where: Prisma.MessageWhereInput =
-    invitations && results ? { kind: { not: 'OPT_OUT_ACK' } } : invitations ? { kind: { notIn: ['OPT_OUT_ACK', ...RESULTS_KINDS] }, NOT: { dedupeKey: { startsWith: RESULTS_KEY_PREFIX } } } : { kind: { in: [...RESULTS_KINDS] } };
+    invitations && results
+      ? { kind: { not: 'OPT_OUT_ACK' } }
+      : invitations
+        ? { kind: { notIn: ['OPT_OUT_ACK', ...RESULTS_KINDS] }, NOT: { dedupeKey: { startsWith: RESULTS_KEY_PREFIX } } }
+        : { OR: [{ kind: { in: [...RESULTS_KINDS] } }, { dedupeKey: { startsWith: RESULTS_KEY_PREFIX } }] };
   const { messageIds, jobs } = await cancelPendingMessages(tx, { contactId, ...where }, reason, now);
   if (results && messageIds.length > 0) {
     await tx.resultRecipient.updateMany({ where: { invitationMessageId: { in: messageIds }, accessState: { in: ['PENDING', 'INVITED'] } }, data: { accessState: 'SUPPRESSED', suppressionReason: reason } });

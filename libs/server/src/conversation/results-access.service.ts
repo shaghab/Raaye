@@ -19,11 +19,16 @@ export class ResultsAccessService {
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
+  /** Current results permission decides access to shared results; a recipient row only records what happened to the notice. */
+  eligible(contact: Pick<Contact, 'consentResults' | 'archivedAt'>): boolean {
+    return contact.consentResults === 'GRANTED' && !contact.archivedAt;
+  }
+
   /**
-   * Snapshots already shared with this respondent and not revoked. The recipient row records the
-   * notice's outcome; access follows the respondent's current results permission, which `deliver`
-   * rechecks, so a permission withdrawn while the notice was queued and validly re-granted later
-   * restores access without another notice.
+   * Snapshots already shared with this respondent and not revoked, for a respondent who is
+   * eligible now (see `eligible`, checked by the caller before anything is built). The recipient
+   * row records the notice's outcome, so a permission withdrawn while the notice was queued and
+   * validly re-granted later restores access without another notice.
    */
   async availableFor(tx: TenantTx, contactId: string): Promise<{ snapshotId: string; title: string }[]> {
     const recipients = await tx.resultRecipient.findMany({
@@ -38,7 +43,7 @@ export class ResultsAccessService {
   /** Validate eligibility again and queue the bound summary chunks inside the current window. */
   async deliver(tx: TenantTx, ctx: SystemContext, contact: Contact, connection: MessagingConnection, snapshotId: string, eventId: string): Promise<string> {
     const recipient = await tx.resultRecipient.findUnique({ where: { organizationId_snapshotId_contactId: { organizationId: ctx.organizationId, snapshotId, contactId: contact.id } }, include: { snapshot: true } });
-    if (!recipient || recipient.snapshot.revokedAt || contact.consentResults !== 'GRANTED' || contact.archivedAt) {
+    if (!recipient || recipient.snapshot.revokedAt || !this.eligible(contact)) {
       await this.delivery.createMessage(tx, { organizationId: ctx.organizationId, connectionId: connection.id, contactId: contact.id, kind: 'COMMAND_REPLY', rendered: { type: 'text', body: copy.notEligible }, dedupeKey: resultsReplyKey('denied', eventId) });
       return 'RESULTS_NOT_ELIGIBLE';
     }

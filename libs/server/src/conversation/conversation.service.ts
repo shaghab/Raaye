@@ -635,6 +635,11 @@ export class ConversationService implements JobHandler {
       await this.queue(s, 'COMMAND_REPLY', this.planner.text(copy.resultsNone), resultsReplyKey('none', s.event.id));
       return 'RESULTS_NONE';
     }
+    // Permission before anything is built: a respondent without current results permission learns nothing, not even the titles.
+    if (!this.results.eligible(contact)) {
+      await this.queue(s, 'COMMAND_REPLY', this.planner.text(copy.notEligible), resultsReplyKey('denied', s.event.id));
+      return 'RESULTS_NOT_ELIGIBLE';
+    }
     if (available.length === 1) return this.results.deliver(s.tx, s.ctx, contact, s.connection, available[0].snapshotId, s.event.id);
     const menu = await this.planner.menu(s.tx, {
       organizationId: s.ctx.organizationId,
