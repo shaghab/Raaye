@@ -16,12 +16,56 @@
       "round": 1,
       "headSha": "7b2a567",
       "requestedAt": "2026-10-08T02:21:32.845928+00:00",
+      "status": "completed",
+      "trigger": "pull request opened (Codex reviews new pull requests automatically)",
+      "reviewedAt": "2026-10-08T02:25:05Z",
+      "findings": 3,
+      "outcome": "2 P1 (invitation-only withdrawal canceled queued result notices and View results controls; revocation not serialized with the hand-off) and 1 P2 (recipient state not restored by an accepted retry, a defect of this change) fixed in 527ea06"
+    },
+    {
+      "round": 2,
+      "headSha": "527ea06",
       "status": "running",
-      "trigger": "pull request opened (Codex reviews new pull requests automatically)"
+      "trigger": "@codex review comment 6051037667"
     }
   ],
-  "processedFindings": [],
+  "processedFindings": [
+    {
+      "commentId": 4213978007,
+      "threadId": "PRRT_kwDOU--Sjc6qK4PI",
+      "priority": "P1",
+      "file": "libs/server/src/contacts/outreach-cancellation.ts",
+      "title": "Scope cancellation to the withdrawn permission",
+      "action": "fixed",
+      "commit": "527ea06",
+      "resolved": true,
+      "replyCommentId": 4214041748
+    },
+    {
+      "commentId": 4213978011,
+      "threadId": "PRRT_kwDOU--Sjc6qK4PK",
+      "priority": "P1",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Serialize revocation with the provider handoff",
+      "action": "fixed",
+      "commit": "527ea06",
+      "resolved": true,
+      "replyCommentId": 4214041881
+    },
+    {
+      "commentId": 4213978015,
+      "threadId": "PRRT_kwDOU--Sjc6qK4PN",
+      "priority": "P2",
+      "file": "libs/server/src/messaging/delivery.service.ts",
+      "title": "Restore recipient state after a successful retry",
+      "action": "fixed",
+      "reason": "defect introduced by this pull request",
+      "commit": "527ea06",
+      "resolved": true,
+      "replyCommentId": 4214041997
+    }
+  ],
   "issues": [],
   "blockers": [],
-  "updatedAt": "2026-10-08T02:21:32.845928+00:00"
+  "updatedAt": "2026-10-08T02:38:10.624995+00:00"
 }
