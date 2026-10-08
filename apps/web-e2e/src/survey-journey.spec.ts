@@ -141,6 +141,9 @@ test('STOP after launch cancels pending sends and results sharing is Admin-only 
   test.setTimeout(180_000);
   await login(page, ACCOUNTS.admin);
   await page.getByRole('link', { name: 'Surveys' }).click();
+  // The seeded survey is found by search, so surveys created by earlier runs cannot push it off the first page.
+  await page.getByLabel('Search').fill('Access to justice');
+  await page.getByRole('button', { name: 'Apply' }).click();
   await page.getByRole('link', { name: /Access to justice 2026/ }).click();
   await page.getByRole('tab', { name: 'Share results' }).click();
   await expect(page.getByText('Shared snapshot')).toBeVisible();
