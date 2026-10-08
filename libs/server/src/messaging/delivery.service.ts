@@ -341,14 +341,18 @@ export class DeliveryService implements JobHandler {
       if (changed.count === 1) await this.markInvitation(tx, messageId, 'FAILED', status.errorCode ?? 'PROVIDER_FAILED');
       return;
     }
+    // Delivery evidence that outranks an earlier failure report supersedes it, error code included:
+    // the message and its invitation settle on the same state in one transaction, so a recipient is
+    // never shown as delivered next to a provider error or counted as both delivered and failed,
+    // whichever order the two callbacks were applied in. The status events keep the failure's history.
+    const supersedesFailure = newRank > DELIVERY_RANK['FAILED'];
     const promoted = await tx.message.updateMany({
       where: { id: messageId, deliveryState: { notIn: statesRankedAtLeast(newRank) } },
-      data: { deliveryState: status.status as DeliveryState, lastStatusAt: status.providerAt },
+      data: supersedesFailure
+        ? { deliveryState: status.status as DeliveryState, lastStatusAt: status.providerAt, lastErrorCode: null }
+        : { deliveryState: status.status as DeliveryState, lastStatusAt: status.providerAt },
     });
-    // Delivery evidence that outranks an earlier failure report supersedes it: the invitation follows
-    // the message's final state in the same transaction, so a recipient is never counted as both
-    // delivered and failed, whichever order the two callbacks were applied in.
-    if (promoted.count === 1 && newRank > DELIVERY_RANK['FAILED']) {
+    if (promoted.count === 1 && supersedesFailure) {
       await tx.invitation.updateMany({ where: { messageId, state: 'FAILED' }, data: { state: 'ACCEPTED', stateReason: null } });
     }
   }

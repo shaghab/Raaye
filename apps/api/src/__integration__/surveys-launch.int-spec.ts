@@ -739,33 +739,40 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
       delivery.recordStatus(orgId, message.connectionId, { phoneNumberId: '', providerMessageId: message.providerMessageId ?? '', recipientIdentity: null, status, providerAt: new Date(base + offset), errorCode: status === 'FAILED' ? '131026' : null, errorTitle: status === 'FAILED' ? 'Message undeliverable' : null });
     const stateOf = async (message: { id: string }) => {
       const [fresh, invitation] = await Promise.all([t.prisma.message.findUniqueOrThrow({ where: { id: message.id } }), t.prisma.invitation.findFirstOrThrow({ where: { messageId: message.id } })]);
-      return { delivery: fresh.deliveryState, invitation: invitation.state, reason: invitation.stateReason };
+      return { delivery: fresh.deliveryState, error: fresh.lastErrorCode, invitation: invitation.state, reason: invitation.stateReason };
     };
     // The failure first, then the read receipt: the receipt supersedes the failure and the invitation follows.
     const first = await messageOf(ids[0]);
-    expect(await stateOf(first)).toEqual({ delivery: 'ACCEPTED', invitation: 'ACCEPTED', reason: null });
+    expect(await stateOf(first)).toEqual({ delivery: 'ACCEPTED', error: null, invitation: 'ACCEPTED', reason: null });
     await report(first, 'FAILED', 1000);
-    expect(await stateOf(first)).toEqual({ delivery: 'FAILED', invitation: 'FAILED', reason: '131026' });
+    expect(await stateOf(first)).toEqual({ delivery: 'FAILED', error: '131026', invitation: 'FAILED', reason: '131026' });
     await report(first, 'READ', 3000);
-    expect(await stateOf(first)).toEqual({ delivery: 'READ', invitation: 'ACCEPTED', reason: null });
+    expect(await stateOf(first)).toEqual({ delivery: 'READ', error: null, invitation: 'ACCEPTED', reason: null });
     // The read receipt first: a failure reported afterwards is refused.
     const second = await messageOf(ids[1]);
     await report(second, 'READ', 3000);
     await report(second, 'FAILED', 1000);
-    expect(await stateOf(second)).toEqual({ delivery: 'READ', invitation: 'ACCEPTED', reason: null });
+    expect(await stateOf(second)).toEqual(await stateOf(first));
     // A sent receipt never outranks a failure, whichever arrives first: the message was sent and then failed.
     const third = await messageOf(ids[2]);
     await report(third, 'SENT', 500);
     await report(third, 'FAILED', 2000);
     await report(third, 'SENT', 1000);
-    expect(await stateOf(third)).toEqual({ delivery: 'FAILED', invitation: 'FAILED', reason: '131026' });
+    expect(await stateOf(third)).toEqual({ delivery: 'FAILED', error: '131026', invitation: 'FAILED', reason: '131026' });
     // Concurrent failure and read receipts settle on the read receipt whichever commits first.
     const fourth = await messageOf(ids[3]);
     await Promise.all([report(fourth, 'FAILED', 1000), report(fourth, 'READ', 3000)]);
-    expect(await stateOf(fourth)).toEqual({ delivery: 'READ', invitation: 'ACCEPTED', reason: null });
-    // The dispatch summary counts each recipient once: three delivered, one failed.
+    expect(await stateOf(fourth)).toEqual({ delivery: 'READ', error: null, invitation: 'ACCEPTED', reason: null });
+    // The dispatch summary counts each recipient once (three delivered, one failed) and shows the same
+    // diagnostics for a failure superseded by a read receipt as for a read receipt alone.
     const dispatch = (await request(t.server).get(`/api/v1/surveys/${id}/dispatch`).set('Authorization', manager.authorization).expect(200)).body;
     expect(dispatch.metrics).toMatchObject({ providerAccepted: 4, delivered: 3, failed: 1 });
+    const rowOf = (contactId: string) => dispatch.recipients.items.find((row: { contactId: string }) => row.contactId === contactId);
+    expect(rowOf(ids[0])).toMatchObject({ invitationState: 'ACCEPTED', deliveryState: 'READ', lastErrorCode: null });
+    expect(rowOf(ids[1])).toMatchObject({ invitationState: 'ACCEPTED', deliveryState: 'READ', lastErrorCode: null });
+    expect(rowOf(ids[2])).toMatchObject({ invitationState: 'FAILED', deliveryState: 'FAILED', lastErrorCode: '131026' });
+    // The failure's history stays with the append-only status events.
+    expect(await t.prisma.messageStatusEvent.count({ where: { messageId: first.id, status: 'FAILED', errorCode: '131026' } })).toBe(1);
     await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
   });
 
