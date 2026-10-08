@@ -5,6 +5,7 @@ import { AuditService } from '../audit/audit.service';
 import { CLOCK } from '../clock/clock.service';
 import type { SystemContext } from '../common/context';
 import { JOB_PRIORITY } from '../jobs/jobs.service';
+import { resultsReplyKey } from '../messaging/dedupe';
 import { DeliveryService } from '../messaging/delivery.service';
 import type { Contact, MessagingConnection } from '../persistence/prisma.service';
 import type { TenantTx } from '../persistence/tenant-db';
@@ -38,7 +39,7 @@ export class ResultsAccessService {
   async deliver(tx: TenantTx, ctx: SystemContext, contact: Contact, connection: MessagingConnection, snapshotId: string, eventId: string): Promise<string> {
     const recipient = await tx.resultRecipient.findUnique({ where: { organizationId_snapshotId_contactId: { organizationId: ctx.organizationId, snapshotId, contactId: contact.id } }, include: { snapshot: true } });
     if (!recipient || recipient.snapshot.revokedAt || contact.consentResults !== 'GRANTED' || contact.archivedAt) {
-      await this.delivery.createMessage(tx, { organizationId: ctx.organizationId, connectionId: connection.id, contactId: contact.id, kind: 'COMMAND_REPLY', rendered: { type: 'text', body: copy.notEligible }, dedupeKey: `results-denied:${eventId}` });
+      await this.delivery.createMessage(tx, { organizationId: ctx.organizationId, connectionId: connection.id, contactId: contact.id, kind: 'COMMAND_REPLY', rendered: { type: 'text', body: copy.notEligible }, dedupeKey: resultsReplyKey('denied', eventId) });
       return 'RESULTS_NOT_ELIGIBLE';
     }
     const org = await tx.organization.findUniqueOrThrow({ where: { id: ctx.organizationId } });

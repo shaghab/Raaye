@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { DeliveryService, JobRunner, RetentionService } from '@raaye/server';
+import { DeliveryService, JobRunner, RetentionService, resultsReplyKey } from '@raaye/server';
 import { parseCsv as parseCsvDomain, readXlsx as readXlsxDomain } from '@raaye/domain';
 import { drainJobs } from '../testing/jobs';
 import { bootTestApp, resetDatabase, seedOrganization, seedUser, type SeededUser, type TestApp } from '../testing/harness';
@@ -354,7 +354,7 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     // the menu, its View results controls and the queued notice alone.
     const { eventId: menuEvent } = (await sim('text', { contactId: people['P1'], text: 'RESULTS' }).expect(200)).body as { eventId: string };
     expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `inbound:${menuEvent}` } })).id)).toBe('DONE');
-    const menu = await t.prisma.message.findUniqueOrThrow({ where: { dedupeKey: `results-menu:${menuEvent}` } });
+    const menu = await t.prisma.message.findUniqueOrThrow({ where: { dedupeKey: resultsReplyKey('menu', menuEvent) } });
     expect(menu.state).toBe('PENDING');
     await withdraw('P1', ['SURVEY_INVITATIONS'], '2026-10-09T12:30:00Z');
     expect((await t.prisma.message.findUniqueOrThrow({ where: { id: menu.id } })).state).toBe('PENDING');
@@ -364,6 +364,13 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     const sentMenu = [...(await outbound(people['P1']))].pop();
     expect(sentMenu).toMatchObject({ kind: 'COMMAND_REPLY', state: 'ACCEPTED' });
     expect(sentMenu?.controls).toHaveLength(2);
+    // A queued reply about a survey (P8's HELP answer) is canceled by an invitation-only withdrawal; the notice stays.
+    const { eventId: helpEvent } = (await sim('text', { contactId: people['P8'], text: 'HELP' }).expect(200)).body as { eventId: string };
+    expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `inbound:${helpEvent}` } })).id)).toBe('DONE');
+    const helpReply = await t.prisma.message.findFirstOrThrow({ where: { contactId: people['P8'], kind: 'COMMAND_REPLY', state: 'PENDING' } });
+    await withdraw('P8', ['SURVEY_INVITATIONS'], '2026-10-09T12:45:00Z');
+    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: helpReply.id } })).toMatchObject({ state: 'CANCELED', suppressionReason: 'CONTACT_WITHDRAWN' });
+    expect((await t.prisma.message.findUniqueOrThrow({ where: { id: noticeOf('P8').id } })).state).toBe('PENDING');
     // P7 withdraws results permission while the notice is queued: the notice is canceled and the recipient marked;
     // valid new evidence restores access to the already-shared results without another notice.
     await withdraw('P7', ['SURVEY_RESULTS'], '2026-10-09T13:00:00Z');

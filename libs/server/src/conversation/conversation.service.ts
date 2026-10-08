@@ -8,6 +8,7 @@ import { ConsentService } from '../contacts/consent.service';
 import type { JobHandler } from '../jobs/job-handler';
 import { JOB_PRIORITY, type ClaimedJob } from '../jobs/jobs.service';
 import { ActionBindingService } from '../messaging/action-bindings';
+import { resultsReplyKey } from '../messaging/dedupe';
 import { DeliveryService } from '../messaging/delivery.service';
 import { MessagePlanner } from '../messaging/planner';
 import type { RenderedMessage } from '../messaging/rendered';
@@ -631,7 +632,7 @@ export class ConversationService implements JobHandler {
   private async showResults(s: Session, contact: Contact): Promise<string> {
     const available = await this.results.availableFor(s.tx, contact.id);
     if (available.length === 0) {
-      await this.replyText(s, copy.resultsNone, 'results');
+      await this.queue(s, 'COMMAND_REPLY', this.planner.text(copy.resultsNone), resultsReplyKey('none', s.event.id));
       return 'RESULTS_NONE';
     }
     if (available.length === 1) return this.results.deliver(s.tx, s.ctx, contact, s.connection, available[0].snapshotId, s.event.id);
@@ -644,7 +645,7 @@ export class ConversationService implements JobHandler {
       items: available.map((item) => ({ label: item.title, purpose: 'VIEW_RESULTS' as const, snapshotId: item.snapshotId })),
       expiresAt: new Date(s.now.getTime() + LIMITS.actionBindingDays * 86_400_000),
     });
-    await this.queue(s, 'COMMAND_REPLY', menu, `results-menu:${s.event.id}`);
+    await this.queue(s, 'COMMAND_REPLY', menu, resultsReplyKey('menu', s.event.id));
     return 'RESULTS_MENU';
   }
 

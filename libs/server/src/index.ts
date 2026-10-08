@@ -45,6 +45,7 @@ export * from './messaging/planner';
 export * from './messaging/delivery.service';
 export * from './messaging/readiness.service';
 export * from './messaging/readiness-rules';
+export * from './messaging/dedupe';
 export * from './messaging/messaging.module';
 export * from './jobs/sweep.service';
 export * from './surveys/audience.service';
