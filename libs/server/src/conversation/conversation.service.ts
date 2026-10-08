@@ -382,7 +382,7 @@ export class ConversationService implements JobHandler {
     const prefix = run.kind === 'TEST' ? `${copy.testLabel} ` : '';
     if (!existing) {
       await this.queue(s, 'COMMAND_REPLY', this.planner.introduction(s.orgCopy, run.revision.title as LocalizedText, run.revision.introduction as LocalizedText, run.revision.questions.length, run.revision.editWindowSeconds, run.revision.locale, prefix), `intro:${participation.id}`, { runId, participationId: participation.id, isTest: run.kind === 'TEST' });
-      if (s.org.profileOnboardingEnabled && s.conversation?.profileOfferState === 'NOT_OFFERED') {
+      if (s.org.profileOnboardingEnabled && s.conversation?.profileOfferState === 'NOT_OFFERED' && (await this.profileFlowReady(s))) {
         await s.tx.conversation.update({ where: { id: s.conversation.id }, data: { profileOfferState: 'OFFERED', profileOfferedAt: s.now } });
         const offer = await this.planner.profileOffer(s.tx, { organizationId: s.ctx.organizationId, contact: { id: contact.id, connectionId: s.connection.id }, mode: binding.mode, participationId: participation.id, org: s.orgCopy, expiresAt: run.closesAt, prefix });
         await this.queue(s, 'PROFILE_OFFER', offer, `profile-offer:${participation.id}`, { runId, participationId: participation.id, isTest: run.kind === 'TEST' });
@@ -549,6 +549,10 @@ export class ConversationService implements JobHandler {
       await this.replyText(s, 'Optional profile details are not collected by this organization.', 'profile');
       return 'PROFILE_DISABLED';
     }
+    if (!(await this.profileFlowReady(s))) {
+      await this.replyText(s, 'Optional profile details cannot be collected right now; please try again later.', 'profile');
+      return 'PROFILE_FLOW_UNAVAILABLE';
+    }
     const participation = participationId ? await s.tx.participation.findUnique({ where: { id: participationId }, include: PARTICIPATION_INCLUDE }) : await this.foreground(s);
     const isTest = participation?.run.kind === 'TEST';
     const flow = await this.planner.profileFlow(s.tx, {
@@ -562,6 +566,19 @@ export class ConversationService implements JobHandler {
     });
     await this.queue(s, 'PROFILE_FLOW', flow, `profile-flow:${s.event.id}`, { runId: participation?.runId ?? null, participationId: participation?.id ?? null, isTest: Boolean(isTest) });
     return 'PROFILE_FLOW_SENT';
+  }
+
+  /**
+   * Readiness refuses to launch while onboarding is enabled and the profile Flow is unpublished;
+   * this guards the live conversation against a Flow unpublished later, so no offer is made that
+   * the follow-up form could not fulfil. Mock connections render Flows locally.
+   */
+  private async profileFlowReady(s: Session): Promise<boolean> {
+    if (s.connection.mode !== 'LIVE') return true;
+    const flow = await s.tx.flowBinding.findFirst({ where: { connectionId: s.connection.id, purpose: 'PROFILE' }, select: { status: true, providerFlowId: true } });
+    if (flow?.status === 'PUBLISHED' && flow.providerFlowId) return true;
+    this.logger.warn({ connectionId: s.connection.id }, 'Profile onboarding skipped: the profile Flow is not published and bound');
+    return false;
   }
 
   private async skipProfile(s: Session, contact: Contact, participationId: string | null): Promise<string> {

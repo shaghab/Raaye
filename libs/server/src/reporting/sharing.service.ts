@@ -113,7 +113,7 @@ export class SharingService {
     const existing = await db.resultSnapshot.findUnique({ where: { organizationId_runId: { organizationId: ctx.organizationId, runId: run.id } } });
     if (existing) return this.status(ctx, surveyId);
     this.reporting.assertRunClosed(run);
-    const readiness = await this.readiness.check(ctx, { needResultsTemplate: true });
+    const readiness = await this.readiness.check(ctx, { purpose: 'RESULTS' });
     if (!readiness.ok || !readiness.connection) throw new DomainError('TEMPLATE_NOT_READY', 'Messaging is not ready to broadcast results', { blockers: readiness.blockers });
     const { aggregate, shareable, suppressed } = await this.buildAggregate(ctx, surveyId);
     if (shareable === 0) throw new DomainError('RESULTS_INSUFFICIENT_SAMPLE', 'Every question is below the minimum of five respondents; nothing can be shared');

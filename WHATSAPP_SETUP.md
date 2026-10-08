@@ -52,6 +52,8 @@ Two template proposals live in `whatsapp/templates/`:
 | `SURVEY_INVITATION` | `raaye_survey_invitation` | Every live invitation (business-initiated) |
 | `RESULTS_AVAILABLE` | `raaye_results_available` | Results sharing outside the 24-hour service window |
 
+Readiness is checked for what is about to be sent: launches, test sends and activations need the invitation template; a results broadcast needs only the results template, so a paused or missing invitation template does not block sharing results after closure. **Settings → Messaging** lists both and warns when the results template is not approved.
+
 1. Submit each template in WhatsApp Manager (or via `POST /{WABA_ID}/message_templates`) with the body text, two positional parameters (organization name, survey title), the sample values and one **quick reply** button.
 2. Wait for Meta's review. Meta decides the category (`UTILITY` or `MARKETING`) and may change it.
 3. Bind the approved name, language and quick-reply button index in **Settings → Messaging → Template bindings** and press **Refresh status**. The status shown comes from `GET /{WABA_ID}/message_templates?name=…`.
@@ -73,7 +75,7 @@ Three versioned Flow JSON assets live in `whatsapp/flows/`:
 2. Create a Flow per purpose in WhatsApp Manager → Flows (categories `SURVEY` / `OTHER`), or `POST /{WABA_ID}/flows`.
 3. Upload the JSON as the Flow asset (`POST /{FLOW_ID}/assets` with `asset_type=FLOW_JSON`). `pnpm whatsapp:validate --live --upload-flow=MULTI_CHOICE=<flowId> --apply` performs exactly this upload and prints Meta's `validation_errors`. It modifies a **draft** Flow asset and is never run automatically.
 4. Test the Flow from the builder, then **publish** it.
-5. Bind each published Flow ID in **Settings → Messaging → Flow bindings**. Readiness reports `FLOW_NOT_READY` until a question needs a Flow that is not published and bound, and warns when the published asset version differs from the repository asset.
+5. Bind each published Flow ID in **Settings → Messaging → Flow bindings**. Readiness reports `FLOW_NOT_READY` until a question needs a Flow that is not published and bound, and warns when the published asset version differs from the repository asset. While optional profile onboarding is enabled in Settings, the `PROFILE` Flow is required for every launch, test send and activation as well, because first-time participants are offered it; disable onboarding or publish and bind the Flow. Should the Flow be unpublished later, the live conversation makes no offer and answers the `PROFILE` command with a short "not right now" reply instead of queueing a form that could not be sent.
 
 Flow responses arrive as `nfm_reply` interactive messages carrying the `action_token` (also sent as `flow_token`), which binds the submission to the exact participation and question. Submissions with an unknown or foreign token are rejected.
 
