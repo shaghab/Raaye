@@ -57,7 +57,9 @@ export async function cancelPendingOutreach(tx: TenantTx, contactId: string, rea
   const canceledInvitations = invitations
     ? await tx.invitation.updateMany({ where: { contactId, state: { in: ['PENDING', 'QUEUED'] } }, data: { state: 'CANCELED', stateReason: reason } })
     : { count: 0 };
-  const purpose: Prisma.ActionBindingWhereInput['purpose'] = invitations && results ? undefined : invitations ? { not: 'VIEW_RESULTS' } : 'VIEW_RESULTS';
-  await tx.actionBinding.updateMany({ where: { contactId, expiresAt: { gt: now }, purpose }, data: { expiresAt: now } });
+  // Controls about shared results: View results buttons and the page controls of a results menu.
+  const resultsControls: Prisma.ActionBindingWhereInput = { OR: [{ purpose: 'VIEW_RESULTS' }, { purpose: 'MENU_SELECT', payload: { path: ['results'], equals: true } }] };
+  const controls: Prisma.ActionBindingWhereInput = invitations && results ? {} : invitations ? { NOT: resultsControls } : resultsControls;
+  await tx.actionBinding.updateMany({ where: { contactId, expiresAt: { gt: now }, ...controls }, data: { expiresAt: now } });
   return { messages: messageIds.length, jobs, invitations: canceledInvitations.count };
 }

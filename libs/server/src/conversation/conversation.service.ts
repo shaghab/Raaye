@@ -442,8 +442,18 @@ export class ConversationService implements JobHandler {
   }
 
   private async menuSelect(s: Session, contact: Contact, binding: ActionBinding): Promise<string> {
-    const payload = (binding.payload as { menu?: string; page?: number; items?: Parameters<MessagePlanner['menu']>[1]['items'] } | null) ?? null;
+    const payload = (binding.payload as { menu?: string; page?: number; results?: boolean; items?: Parameters<MessagePlanner['menu']>[1]['items'] } | null) ?? null;
     if (payload?.menu === 'next' && payload.items) {
+      if (payload.results) {
+        // Every page of the results menu is subject to the respondent's current results permission.
+        if (!this.results.eligible(contact)) {
+          await this.queue(s, 'COMMAND_REPLY', this.planner.text(copy.notEligible), resultsReplyKey('denied', s.event.id));
+          return 'RESULTS_NOT_ELIGIBLE';
+        }
+        const page = await this.planner.menu(s.tx, { organizationId: s.ctx.organizationId, contact: { id: contact.id, connectionId: s.connection.id }, mode: binding.mode, body: copy.resultsMenu, buttonText: 'Results', items: payload.items, expiresAt: binding.expiresAt, page: payload.page ?? 1 });
+        await this.queue(s, 'COMMAND_REPLY', page, resultsReplyKey('menu', s.event.id));
+        return 'RESULTS_MENU_PAGE';
+      }
       const menu = await this.planner.menu(s.tx, { organizationId: s.ctx.organizationId, contact: { id: contact.id, connectionId: s.connection.id }, mode: binding.mode, body: copy.openSurveysMenu, buttonText: 'Choose', items: payload.items, expiresAt: binding.expiresAt, page: payload.page ?? 1 });
       await this.queue(s, 'COMMAND_REPLY', menu, `menu:${s.event.id}`);
       return 'MENU_PAGE';

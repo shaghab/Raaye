@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { DeliveryService, JobRunner, RetentionService, resultsReplyKey } from '@raaye/server';
+import { DeliveryService, JobRunner, MessagePlanner, RetentionService, createTenantDb, resultsReplyKey } from '@raaye/server';
 import { parseCsv as parseCsvDomain, readXlsx as readXlsxDomain } from '@raaye/domain';
 import { drainJobs } from '../testing/jobs';
 import { bootTestApp, resetDatabase, seedOrganization, seedUser, type SeededUser, type TestApp } from '../testing/harness';
@@ -452,6 +452,52 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     await sim('text', { contactId: people['P1'], text: 'RESULTS' }).expect(200);
     await drainJobs(t);
     expect([...(await outbound(people['P1']))].pop()?.text).toContain('No shared results');
+  });
+
+  it('the page control of a results menu follows results permission like View results (R51)', async () => {
+    // Ten shared surveys would page the results menu; the menu is built directly here because the suite has two snapshots.
+    const snapshots = await t.prisma.resultSnapshot.findMany({ where: { organizationId: orgId }, select: { id: true } });
+    expect(snapshots.length).toBeGreaterThanOrEqual(2);
+    const connection = await t.prisma.messagingConnection.findFirstOrThrow({ where: { organizationId: orgId } });
+    const planner = t.app.get(MessagePlanner);
+    const delivery = t.app.get(DeliveryService);
+    const db = createTenantDb(t.prisma, orgId);
+    const items = Array.from({ length: 10 }, (_, index) => ({ label: `Shared survey ${index + 1}`, purpose: 'VIEW_RESULTS' as const, snapshotId: snapshots[index % snapshots.length].id }));
+    const buildMenu = async (key: string) => {
+      const message = await db.$transaction(async (tx) => {
+        const rendered = await planner.menu(tx, { organizationId: orgId, contact: { id: people['P1'], connectionId: connection.id }, mode: 'LIVE', body: 'Which results?', buttonText: 'Results', items, expiresAt: new Date(t.clock.now().getTime() + 86_400_000) });
+        return delivery.createMessage(tx, { organizationId: orgId, connectionId: connection.id, contactId: people['P1'], kind: 'COMMAND_REPLY', rendered, dedupeKey: resultsReplyKey('menu', key) });
+      });
+      await drainJobs(t);
+      const next = await t.prisma.actionBinding.findFirstOrThrow({ where: { contactId: people['P1'], purpose: 'MENU_SELECT', expiresAt: { gt: t.clock.now() } }, orderBy: { createdAt: 'desc' } });
+      expect(next.payload).toMatchObject({ menu: 'next', page: 1, results: true });
+      return { messageId: message.id, next };
+    };
+    const withdraw = (scopes: string[], evidenceAt: string) =>
+      request(t.server).post(`/api/v1/contacts/${people['P1']}/consent-events`).set('Authorization', manager.authorization).send({ scopes, type: 'WITHDRAWN', evidenceAt, evidenceReference: 'Call' }).expect(201);
+    const liveControls = () => t.prisma.actionBinding.count({ where: { contactId: people['P1'], purpose: { in: ['VIEW_RESULTS', 'MENU_SELECT'] }, expiresAt: { gt: t.clock.now() } } });
+    // Withdrawing survey invitations leaves the results menu's controls, including its page control, alive; the next page is served.
+    const first = await buildMenu('page-1');
+    await withdraw(['SURVEY_INVITATIONS'], '2026-10-09T15:00:00Z');
+    expect(await liveControls()).toBe(10);
+    await tap(people['P1'], 'Next page', (message) => message.id === first.messageId);
+    const page = [...(await outbound(people['P1']))].pop();
+    expect(page).toMatchObject({ kind: 'COMMAND_REPLY', state: 'ACCEPTED' });
+    expect(page?.text).toBe('Which results would you like to see?');
+    expect(page?.controls).toHaveLength(1);
+    // Withdrawing results expires the page control with the View results controls (the served page added one row control).
+    const beforeSecond = await liveControls();
+    const second = await buildMenu('page-2');
+    expect(await liveControls()).toBe(beforeSecond + 10);
+    await withdraw(['SURVEY_RESULTS'], '2026-10-09T15:30:00Z');
+    expect(await liveControls()).toBe(0);
+    expect((await t.prisma.actionBinding.findUniqueOrThrow({ where: { id: second.next.id } })).expiresAt.getTime()).toBeLessThanOrEqual(t.clock.now().getTime());
+    // A page control that is still live is refused for a respondent without results permission.
+    const third = await buildMenu('page-3');
+    const pagesBefore = await t.prisma.message.count({ where: { contactId: people['P1'], dedupeKey: { startsWith: 'results-menu:' } } });
+    await tap(people['P1'], 'Next page', (message) => message.id === third.messageId);
+    expect([...(await outbound(people['P1']))].pop()?.text).toContain('no longer available');
+    expect(await t.prisma.message.count({ where: { contactId: people['P1'], dedupeKey: { startsWith: 'results-menu:' } } })).toBe(pagesBefore);
   });
 
   it('retention cleanup removes staged imports, raw webhooks and quarantine without touching answers (R56)', async () => {
