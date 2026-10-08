@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { JobRunner, RetentionService } from '@raaye/server';
+import { DeliveryService, JobRunner, RetentionService } from '@raaye/server';
 import { parseCsv as parseCsvDomain, readXlsx as readXlsxDomain } from '@raaye/domain';
 import { drainJobs } from '../testing/jobs';
 import { bootTestApp, resetDatabase, seedOrganization, seedUser, type SeededUser, type TestApp } from '../testing/harness';
@@ -264,6 +264,17 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     }
     await drainJobs(t);
     expect((await request(t.server).get(`/api/v1/surveys/${surveyId}/result-sharing`).set('Authorization', admin.authorization).expect(200)).body.recipients.byState).toEqual({ INVITED: 3 });
+    // A delivery failure the provider reports after acceptance is evidence on the message, not a loss of access:
+    // P3 can still ask for the results.
+    const p3Invite = await t.prisma.message.findFirstOrThrow({ where: { kind: 'RESULTS_INVITATION', contactId: people['P3'] } });
+    await t.prisma.message.update({ where: { id: p3Invite.id }, data: { deliveryState: 'SENT' } });
+    expect(await t.app.get(DeliveryService).recordStatus(orgId, p3Invite.connectionId, { phoneNumberId: '', providerMessageId: p3Invite.providerMessageId ?? '', recipientIdentity: null, status: 'FAILED', providerAt: new Date(t.clock.now().getTime() + 5000), errorCode: '131026', errorTitle: 'Message undeliverable' })).toBe('RECORDED');
+    expect(await t.prisma.message.findUniqueOrThrow({ where: { id: p3Invite.id } })).toMatchObject({ state: 'ACCEPTED', deliveryState: 'FAILED' });
+    expect((await t.prisma.resultRecipient.findFirstOrThrow({ where: { invitationMessageId: p3Invite.id } })).accessState).toBe('INVITED');
+    await sim('text', { contactId: people['P3'], text: 'RESULTS' }).expect(200);
+    await drainJobs(t);
+    expect((await outbound(people['P3'])).filter((message) => message.kind === 'RESULTS_CONTENT').length).toBeGreaterThanOrEqual(1);
+    expect((await t.prisma.resultRecipient.findFirstOrThrow({ where: { invitationMessageId: p3Invite.id } })).accessState).toBe('VIEWED');
     const p2Invite = await t.prisma.message.findFirstOrThrow({ where: { kind: 'RESULTS_INVITATION', contactId: people['P2'] } });
     expect((p2Invite.rendered as { type: string }).type).toBe('template');
     expect(p2Invite.state).toBe('ACCEPTED');
@@ -295,7 +306,8 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     await drainJobs(t);
     expect([...(await outbound(people['=P4']))].pop()?.text).toContain('No shared results');
     const status = (await request(t.server).get(`/api/v1/surveys/${surveyId}/result-sharing`).set('Authorization', manager.authorization).expect(200)).body;
-    expect(status.recipients.byState).toMatchObject({ VIEWED: 2, INVITED: 1 });
+    expect(status.recipients.byState).toEqual({ VIEWED: 3 });
+    expect(status.recipients.byDelivery).toMatchObject({ FAILED: 1 });
     const revoked = (await request(t.server).post(`/api/v1/surveys/${surveyId}/result-sharing/revoke`).set('Authorization', admin.authorization).expect(200)).body;
     expect(revoked.snapshot.revokedAt).not.toBeNull();
     await sim('text', { contactId: people['P1'], text: 'RESULTS' }).expect(200);

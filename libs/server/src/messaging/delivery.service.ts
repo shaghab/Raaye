@@ -120,7 +120,7 @@ export class DeliveryService implements JobHandler {
       await db.$transaction(async (tx) => {
         await tx.messageAttempt.update({ where: { id: inFlight.id }, data: { outcome: 'UNKNOWN', finishedAt: now, errorCode: 'LEASE_LOST' } });
         await tx.message.update({ where: { id: initial.id }, data: { state: 'UNKNOWN', deliveryState: 'UNKNOWN', lastErrorCode: 'LEASE_LOST' } });
-        await this.markInvitation(tx, initial.id, 'UNKNOWN', 'LEASE_LOST');
+        await this.markOutcome(tx, initial.id, 'UNKNOWN', 'LEASE_LOST');
       });
       return 'UNKNOWN';
     }
@@ -162,7 +162,7 @@ export class DeliveryService implements JobHandler {
       });
       if (!decision.allowed) {
         await tx.message.update({ where: { id: message.id }, data: { state: 'SUPPRESSED', deliveryState: 'SUPPRESSED', suppressionReason: decision.reason } });
-        await this.markInvitation(tx, message.id, 'SUPPRESSED', decision.reason);
+        await this.markOutcome(tx, message.id, 'SUPPRESSED', decision.reason);
         await this.audit.record(ctx, { action: 'message.suppressed', resourceType: 'message', resourceId: message.id, metadata: { reason: decision.reason, kind: message.kind } }, tx);
         return { outcome: 'SUPPRESSED' as const, reason: decision.reason, kind: message.kind };
       }
@@ -218,7 +218,7 @@ export class DeliveryService implements JobHandler {
         if (!decision.allowed) {
           await tx.messageAttempt.update({ where: { id: attempt.id }, data: { outcome: 'FAILED', finishedAt: this.clock.now(), errorCode: decision.reason, retryable: false } });
           await tx.message.update({ where: { id: message.id }, data: { state: 'SUPPRESSED', deliveryState: 'SUPPRESSED', suppressionReason: decision.reason } });
-          await this.markInvitation(tx, message.id, 'SUPPRESSED', decision.reason);
+          await this.markOutcome(tx, message.id, 'SUPPRESSED', decision.reason);
           await this.audit.record(ctx, { action: 'message.suppressed', resourceType: 'message', resourceId: message.id, metadata: { reason: decision.reason, kind: message.kind, attempt: attemptNumber } }, tx);
           return { outcome: 'SUPPRESSED' as const, reason: decision.reason };
         }
@@ -236,7 +236,7 @@ export class DeliveryService implements JobHandler {
         if (result.outcome === 'ACCEPTED') {
           await tx.messageAttempt.update({ where: { id: attempt.id }, data: { outcome: 'ACCEPTED', finishedAt, providerMessageId: result.providerMessageId } });
           await tx.message.update({ where: { id: message.id }, data: { state: 'ACCEPTED', deliveryState: 'ACCEPTED', providerMessageId: result.providerMessageId, lastStatusAt: finishedAt } });
-          await this.markInvitation(tx, message.id, 'ACCEPTED', null);
+          await this.markOutcome(tx, message.id, 'ACCEPTED', null);
           await tx.conversation.upsert({
             where: { organizationId_contactId: { organizationId, contactId: message.contactId } },
             create: { organizationId, contactId: message.contactId, connectionId: message.connectionId },
@@ -248,7 +248,7 @@ export class DeliveryService implements JobHandler {
         if (result.outcome === 'UNKNOWN') {
           await tx.messageAttempt.update({ where: { id: attempt.id }, data: { outcome: 'UNKNOWN', finishedAt, errorCode: result.errorCode, errorDetail: result.detail ?? null } });
           await tx.message.update({ where: { id: message.id }, data: { state: 'UNKNOWN', deliveryState: 'UNKNOWN', lastErrorCode: result.errorCode } });
-          await this.markInvitation(tx, message.id, 'UNKNOWN', result.errorCode);
+          await this.markOutcome(tx, message.id, 'UNKNOWN', result.errorCode);
           await this.audit.record(ctx, { action: 'message.outcome_unknown', resourceType: 'message', resourceId: message.id, metadata: { errorCode: result.errorCode, attempt: attemptNumber } }, tx);
           return { outcome: 'UNKNOWN' as const };
         }
@@ -258,7 +258,7 @@ export class DeliveryService implements JobHandler {
           where: { id: message.id },
           data: finalFailure ? { state: 'FAILED', deliveryState: 'FAILED', lastErrorCode: result.errorCode } : { state: 'PENDING', lastErrorCode: result.errorCode },
         });
-        if (finalFailure) await this.markInvitation(tx, message.id, 'FAILED', result.errorCode);
+        if (finalFailure) await this.markOutcome(tx, message.id, 'FAILED', result.errorCode);
         return { outcome: 'FAILED' as const, finalFailure, errorCode: result.errorCode, detail: result.detail ?? null };
       },
       { timeout: HANDOFF_TIMEOUT_MS, maxWait: 15_000 },
@@ -410,13 +410,23 @@ export class DeliveryService implements JobHandler {
     return Boolean(rows[0]?.revoked_at);
   }
 
-  /**
-   * Reflect a message outcome on the invitation it carries and, for a results notice, on the
-   * recipient row reporting reads. An accepted send (a retry included) makes the recipient
-   * invited again; a recipient who already viewed the results is never moved back.
-   */
+  /** Reflect a send-time outcome on the invitation the message carries and on the result recipient reporting reads. */
+  private async markOutcome(tx: TenantTx, messageId: string, state: 'ACCEPTED' | 'FAILED' | 'UNKNOWN' | 'SUPPRESSED', reason: string | null): Promise<void> {
+    await this.markInvitation(tx, messageId, state, reason);
+    await this.markResultRecipient(tx, messageId, state, reason);
+  }
+
   private async markInvitation(tx: TenantTx, messageId: string, state: 'ACCEPTED' | 'FAILED' | 'UNKNOWN' | 'SUPPRESSED', reason: string | null): Promise<void> {
     await tx.invitation.updateMany({ where: { messageId }, data: { state, stateReason: reason } });
+  }
+
+  /**
+   * Send-time outcomes only. An accepted send (a retry included) makes the recipient invited
+   * again and a recipient who already viewed the results is never moved back. A delivery failure
+   * the provider reports after acceptance is delivery evidence on the message; it does not take
+   * the respondent's access to the shared results away, since the notice cannot be resent.
+   */
+  private async markResultRecipient(tx: TenantTx, messageId: string, state: 'ACCEPTED' | 'FAILED' | 'UNKNOWN' | 'SUPPRESSED', reason: string | null): Promise<void> {
     if (state === 'ACCEPTED') {
       await tx.resultRecipient.updateMany({ where: { invitationMessageId: messageId, accessState: { in: ['PENDING', 'SUPPRESSED', 'FAILED', 'UNKNOWN'] } }, data: { accessState: 'INVITED', suppressionReason: null } });
     } else {
