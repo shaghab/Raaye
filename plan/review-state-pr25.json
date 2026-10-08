@@ -43,8 +43,17 @@
     {
       "round": 4,
       "headSha": "9f0cd89",
+      "status": "completed",
+      "trigger": "@codex review comment 6051280722",
+      "reviewedAt": "2026-10-08T03:07:29Z",
+      "findings": 1,
+      "outcome": "P2 (invitation-only withdrawal left queued survey replies to be sent with expired controls, a consequence of the round-3 fix) fixed in 23cb902"
+    },
+    {
+      "round": 5,
+      "headSha": "23cb902",
       "status": "running",
-      "trigger": "@codex review comment 6051280722"
+      "trigger": "@codex review comment 6051426551"
     }
   ],
   "processedFindings": [
@@ -116,9 +125,21 @@
       "commit": "9f0cd89",
       "resolved": true,
       "replyCommentId": 4214152776
+    },
+    {
+      "commentId": 4214182466,
+      "threadId": "PRRT_kwDOU--Sjc6qLXV0",
+      "priority": "P2",
+      "file": "libs/server/src/contacts/outreach-cancellation.ts",
+      "title": "Cancel queued survey replies after invitation withdrawal",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "23cb902",
+      "resolved": true,
+      "replyCommentId": 4214217924
     }
   ],
   "issues": [],
   "blockers": [],
-  "updatedAt": "2026-10-08T03:01:17.757148+00:00"
+  "updatedAt": "2026-10-08T03:15:03.649379+00:00"
 }
