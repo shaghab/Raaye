@@ -551,6 +551,33 @@ describe('participant conversation engine (R15-R22, R31-R42)', () => {
     expect((await last(closer)).text.toLowerCase()).toContain('closed');
   });
 
+  it('an older inbound message processed after a newer one never closes the service window (R45)', async () => {
+    const contactId = await createContact('Window Wajiha', '+923001000093', true);
+    const conversation = () => t.prisma.conversation.findUniqueOrThrow({ where: { organizationId_contactId: { organizationId: orgId, contactId } } });
+    await say(contactId, 'HELP');
+    const opened = (await conversation()).lastInboundAt;
+    expect(opened).toEqual(t.clock.now());
+    // The provider delivers a message the participant sent 24 hours earlier only now (reordered delivery, a backlog drained after an outage).
+    await sim('text', { contactId, text: 'HELP', providerAtOffsetSeconds: -24 * 3600 }).expect(200);
+    await drainJobs(t);
+    expect((await conversation()).lastInboundAt).toEqual(opened);
+    const replies = (await outbound(contactId)).filter((message) => message.kind === 'COMMAND_REPLY');
+    expect(replies.map((message) => message.state)).toEqual(['ACCEPTED', 'ACCEPTED']);
+    // The same rule for an enrollment in progress and for the placeholder that answers an unknown sender.
+    await sim('text', { phone: '+923001000092', text: 'hi', profileName: 'Late Laila' }).expect(200);
+    await drainJobs(t);
+    const enrollment = () => t.prisma.enrollment.findFirstOrThrow({ where: { organizationId: orgId, senderIdentity: '923001000092' } });
+    const placeholder = await t.prisma.contact.findUniqueOrThrow({ where: { organizationId_phoneE164: { organizationId: orgId, phoneE164: '+923001000092' } } });
+    const placeholderConversation = () => t.prisma.conversation.findUniqueOrThrow({ where: { organizationId_contactId: { organizationId: orgId, contactId: placeholder.id } } });
+    expect((await enrollment()).lastInboundAt).toEqual(t.clock.now());
+    expect((await placeholderConversation()).lastInboundAt).toEqual(t.clock.now());
+    await sim('text', { phone: '+923001000092', text: 'hi', providerAtOffsetSeconds: -24 * 3600 }).expect(200);
+    await drainJobs(t);
+    expect((await enrollment()).lastInboundAt).toEqual(t.clock.now());
+    expect((await placeholderConversation()).lastInboundAt).toEqual(t.clock.now());
+    expect((await outbound(placeholder.id)).map((message) => message.state)).toEqual(['ACCEPTED', 'ACCEPTED']);
+  });
+
   it('internal task endpoints reject untrusted callers (R58)', async () => {
     await request(t.server).post('/api/v1/internal/sweep').expect(401);
     await request(t.server).post('/api/v1/internal/sweep').set('Authorization', 'Bearer wrong').expect(401);

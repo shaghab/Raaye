@@ -38,6 +38,8 @@ interface Session {
   event: InboundEvent;
   payload: NormalizedPayload;
   now: Date;
+  /** When the participant sent the message (the provider's timestamp): what the service window counts from. */
+  inboundAt: Date;
   contact: Contact | null;
   conversation: Conversation | null;
   replies: number;
@@ -103,13 +105,9 @@ export class ConversationService implements JobHandler {
       const inboundAt = event.providerAt ?? event.receivedAt;
       if (contact) {
         if (!contact.providerIdentity) await tx.contact.update({ where: { id: contact.id }, data: { providerIdentity: event.senderIdentity } });
-        conversation = await tx.conversation.upsert({
-          where: { organizationId_contactId: { organizationId: ctx.organizationId, contactId: contact.id } },
-          create: { organizationId: ctx.organizationId, contactId: contact.id, connectionId: connection.id, lastInboundAt: inboundAt },
-          update: { lastInboundAt: inboundAt, connectionId: connection.id },
-        });
+        conversation = await this.touchConversation(tx, ctx.organizationId, contact.id, connection.id, inboundAt);
       }
-      const session: Session = { tx, ctx, org, orgCopy: this.planner.org(org), connection, event, payload, now, contact, conversation, replies: 0 };
+      const session: Session = { tx, ctx, org, orgCopy: this.planner.org(org), connection, event, payload, now, inboundAt, contact, conversation, replies: 0 };
       const code = await this.dispatch(session);
       await tx.inboundEvent.update({ where: { id: event.id }, data: { processingState: 'PROCESSED', processedAt: now, outcomeCode: code } });
       return code;
@@ -183,11 +181,12 @@ export class ConversationService implements JobHandler {
       return 'HELP';
     }
     if (!active || command?.kind === 'START') {
-      await tx.enrollment.upsert({
+      const enrollment = await tx.enrollment.upsert({
         where: { organizationId_connectionId_senderIdentity: { organizationId: s.ctx.organizationId, connectionId: s.connection.id, senderIdentity: s.event.senderIdentity } },
-        create: { organizationId: s.ctx.organizationId, connectionId: s.connection.id, senderIdentity: s.event.senderIdentity, state: 'AWAITING_NAME', profileDisplayName: s.event.senderProfileName, noticeVersion: s.org.participantNoticeVersion, lastInboundAt: s.now, expiresAt: new Date(s.now.getTime() + ENROLLMENT_TTL_HOURS * 3600_000) },
-        update: { state: 'AWAITING_NAME', proposedName: null, profileDisplayName: s.event.senderProfileName, noticeVersion: s.org.participantNoticeVersion, lastInboundAt: s.now, expiresAt: new Date(s.now.getTime() + ENROLLMENT_TTL_HOURS * 3600_000) },
+        create: { organizationId: s.ctx.organizationId, connectionId: s.connection.id, senderIdentity: s.event.senderIdentity, state: 'AWAITING_NAME', profileDisplayName: s.event.senderProfileName, noticeVersion: s.org.participantNoticeVersion, lastInboundAt: s.inboundAt, expiresAt: new Date(s.now.getTime() + ENROLLMENT_TTL_HOURS * 3600_000) },
+        update: { state: 'AWAITING_NAME', proposedName: null, profileDisplayName: s.event.senderProfileName, noticeVersion: s.org.participantNoticeVersion, expiresAt: new Date(s.now.getTime() + ENROLLMENT_TTL_HOURS * 3600_000) },
       });
+      await this.advanceEnrollment(tx, enrollment.id, s.inboundAt);
       const hint = s.event.senderProfileName ? ` ${copy.enrollmentConfirmName(s.event.senderProfileName)}` : '';
       await this.queue(s, 'ENROLLMENT', this.planner.text(`${copy.enrollmentAskName(s.orgCopy)}${hint}`), `enroll:${s.event.id}`);
       return 'ENROLLMENT_STARTED';
@@ -201,18 +200,21 @@ export class ConversationService implements JobHandler {
         return 'ENROLLMENT_NAME_INVALID';
       }
       // The notice version is bound to the prompt that renders it, not to the moment of acceptance.
-      await tx.enrollment.update({ where: { id: active.id }, data: { proposedName: name, state: 'AWAITING_CONSENT', lastInboundAt: s.now, noticeVersion: s.org.participantNoticeVersion } });
+      await tx.enrollment.update({ where: { id: active.id }, data: { proposedName: name, state: 'AWAITING_CONSENT', noticeVersion: s.org.participantNoticeVersion } });
+      await this.advanceEnrollment(tx, active.id, s.inboundAt);
       await this.queueConsentPrompt(s, null);
       return 'ENROLLMENT_NAME_RECORDED';
     }
     const reply = parseConsentReply(s.payload.text);
     if (!reply) {
-      await tx.enrollment.update({ where: { id: active.id }, data: { lastInboundAt: s.now, noticeVersion: s.org.participantNoticeVersion } });
+      await tx.enrollment.update({ where: { id: active.id }, data: { noticeVersion: s.org.participantNoticeVersion } });
+      await this.advanceEnrollment(tx, active.id, s.inboundAt);
       await this.queueConsentPrompt(s, null);
       return 'ENROLLMENT_CONSENT_REPROMPT';
     }
     if (reply === 'DECLINE') {
-      await tx.enrollment.update({ where: { id: active.id }, data: { state: 'DECLINED', lastInboundAt: s.now } });
+      await tx.enrollment.update({ where: { id: active.id }, data: { state: 'DECLINED' } });
+      await this.advanceEnrollment(tx, active.id, s.inboundAt);
       await this.queue(s, 'ENROLLMENT', this.planner.text(copy.consentDeclined), `enroll:${s.event.id}`);
       return 'ENROLLMENT_DECLINED';
     }
@@ -228,12 +230,9 @@ export class ConversationService implements JobHandler {
       update: { name, providerIdentity: s.event.senderIdentity, archivedAt: null, profileProvenance: asJson({}) },
     });
     await this.consent.grantFromParticipant(s.tx, contact.id, s.now, String(shownNoticeVersion), s.event.providerMessageId);
-    await s.tx.enrollment.update({ where: { id: enrollmentId }, data: { state: 'COMPLETED', lastInboundAt: s.now } });
-    await s.tx.conversation.upsert({
-      where: { organizationId_contactId: { organizationId: s.ctx.organizationId, contactId: contact.id } },
-      create: { organizationId: s.ctx.organizationId, contactId: contact.id, connectionId: s.connection.id, lastInboundAt: s.now },
-      update: { lastInboundAt: s.now, pendingInput: null },
-    });
+    await s.tx.enrollment.update({ where: { id: enrollmentId }, data: { state: 'COMPLETED' } });
+    await this.advanceEnrollment(s.tx, enrollmentId, s.inboundAt);
+    s.conversation = await this.touchConversation(s.tx, s.ctx.organizationId, contact.id, s.connection.id, s.inboundAt, { pendingInput: null });
     s.contact = contact;
     await this.audit.record(s.ctx, { action: 'participant.enrolled', resourceType: 'contact', resourceId: contact.id, metadata: { source: 'whatsapp' } }, s.tx);
     await this.queue(s, 'ENROLLMENT', this.planner.text(copy.consentGranted(s.orgCopy)), `enroll:${s.event.id}`);
@@ -711,6 +710,29 @@ export class ConversationService implements JobHandler {
     await this.queue(s, 'COMMAND_REPLY', this.planner.text(body), `${tag}:${s.event.id}`);
   }
 
+  /**
+   * Record a verified inbound message on the contact's conversation. The window only moves
+   * forward: an older event processed after a newer one (the provider delivering out of order, a
+   * backlog drained after an outage) keeps the newer timestamp, so a window a recent message
+   * opened is never closed by it. The advance is conditional on the stored value, so no
+   * concurrent handler can move it back either.
+   */
+  private async touchConversation(tx: TenantTx, organizationId: string, contactId: string, connectionId: string, inboundAt: Date, update: Prisma.ConversationUncheckedUpdateInput = {}): Promise<Conversation> {
+    const conversation = await tx.conversation.upsert({
+      where: { organizationId_contactId: { organizationId, contactId } },
+      create: { organizationId, contactId, connectionId, lastInboundAt: inboundAt },
+      update: { connectionId, ...update },
+    });
+    if (conversation.lastInboundAt && conversation.lastInboundAt.getTime() >= inboundAt.getTime()) return conversation;
+    const advanced = await tx.conversation.updateMany({ where: { id: conversation.id, OR: [{ lastInboundAt: null }, { lastInboundAt: { lt: inboundAt } }] }, data: { lastInboundAt: inboundAt } });
+    return advanced.count === 1 ? { ...conversation, lastInboundAt: inboundAt } : conversation;
+  }
+
+  /** The same forward-only rule for the record of an enrollment in progress. */
+  private async advanceEnrollment(tx: TenantTx, enrollmentId: string, inboundAt: Date): Promise<void> {
+    await tx.enrollment.updateMany({ where: { id: enrollmentId, lastInboundAt: { lt: inboundAt } }, data: { lastInboundAt: inboundAt } });
+  }
+
   private async queue(s: Session, kind: 'COMMAND_REPLY' | 'ACKNOWLEDGEMENT' | 'QUESTION' | 'OPT_OUT_ACK' | 'PROFILE_OFFER' | 'PROFILE_FLOW' | 'ENROLLMENT', rendered: RenderedMessage, dedupeKey: string, extra: { runId?: string | null; participationId?: string | null; isTest?: boolean; priority?: number } = {}): Promise<void> {
     const contactId = s.contact?.id;
     if (!contactId) {
@@ -744,11 +766,7 @@ export class ConversationService implements JobHandler {
       update: { providerIdentity: s.event.senderIdentity },
     });
     s.contact = placeholder;
-    s.conversation = await s.tx.conversation.upsert({
-      where: { organizationId_contactId: { organizationId: s.ctx.organizationId, contactId: placeholder.id } },
-      create: { organizationId: s.ctx.organizationId, contactId: placeholder.id, connectionId: s.connection.id, lastInboundAt: s.now },
-      update: { lastInboundAt: s.now },
-    });
+    s.conversation = await this.touchConversation(s.tx, s.ctx.organizationId, placeholder.id, s.connection.id, s.inboundAt);
     await this.delivery.createMessage(s.tx, { organizationId: s.ctx.organizationId, connectionId: s.connection.id, contactId: placeholder.id, kind, rendered, dedupeKey, priority: JOB_PRIORITY.reply });
     s.replies += 1;
   }
