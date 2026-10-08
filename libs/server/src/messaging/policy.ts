@@ -16,6 +16,8 @@ export interface PolicyInput {
   needsFlow: boolean;
   priorUnknownAttempts: number;
   priorAcceptedAttempts: number;
+  /** The result snapshot a results message belongs to was revoked by an Admin. */
+  snapshotRevoked?: boolean;
 }
 
 export type PolicyDecision = { allowed: true } | { allowed: false; reason: string };
@@ -40,6 +42,7 @@ export function evaluateSendPolicy(input: PolicyInput): PolicyDecision {
   if (input.providerMode === 'live' && input.contact.isSynthetic) return { allowed: false, reason: 'SYNTHETIC_CONTACT' };
   if (input.contact.archivedAt && !TRANSACTIONAL_KINDS.has(input.kind)) return { allowed: false, reason: 'CONTACT_ARCHIVED' };
   if (RESULTS_KINDS.has(input.kind)) {
+    if (input.snapshotRevoked) return { allowed: false, reason: 'RESULTS_REVOKED' };
     if (input.contact.consentResults === 'WITHDRAWN') return { allowed: false, reason: 'CONTACT_WITHDRAWN' };
     if (input.contact.consentResults !== 'GRANTED') return { allowed: false, reason: 'CONTACT_CONSENT_MISSING' };
   } else {

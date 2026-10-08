@@ -48,6 +48,8 @@ describe('sending policy gate (R15, R22, R45, R57)', () => {
     expect(evaluateSendPolicy({ ...results, contact: { ...base.contact, consentResults: 'WITHDRAWN' } })).toEqual({ allowed: false, reason: 'CONTACT_WITHDRAWN' });
     // STOP withdraws every scope.
     expect(evaluateSendPolicy({ ...results, contact: { ...base.contact, consentInvitations: 'WITHDRAWN', consentResults: 'WITHDRAWN' } })).toEqual({ allowed: false, reason: 'CONTACT_WITHDRAWN' });
+    // A revoked snapshot stops every notice still on its way out.
+    expect(evaluateSendPolicy({ ...results, snapshotRevoked: true })).toEqual({ allowed: false, reason: 'RESULTS_REVOKED' });
     // Survey invitations are not unlocked by results permission.
     expect(evaluateSendPolicy({ ...base, contact: { ...base.contact, consentInvitations: 'UNKNOWN', consentResults: 'GRANTED' } })).toEqual({ allowed: false, reason: 'CONTACT_CONSENT_MISSING' });
   });

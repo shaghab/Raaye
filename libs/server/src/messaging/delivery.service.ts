@@ -132,7 +132,7 @@ export class DeliveryService implements JobHandler {
     // can invalidate before the hand-off, and a message canceled meanwhile is never revived.
     const claim = await db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM contacts WHERE id = ${initial.contactId}::uuid AND organization_id = ${organizationId}::uuid FOR UPDATE`;
-      const message = await tx.message.findUnique({ where: { id: messageId }, include: { contact: true, connection: true, run: true, attempts: true } });
+      const message = await tx.message.findUnique({ where: { id: messageId }, include: { contact: true, connection: true, run: true, attempts: true, snapshot: { select: { revokedAt: true } } } });
       if (!message || message.state !== 'PENDING') return { outcome: 'SKIPPED' as const };
       const conversation = await tx.conversation.findUnique({ where: { organizationId_contactId: { organizationId, contactId: message.contactId } } });
       const rendered = message.rendered as RenderedMessage;
@@ -158,6 +158,7 @@ export class DeliveryService implements JobHandler {
         needsFlow: rendered.type === 'flow',
         priorUnknownAttempts: options.overrideUnknown ? 0 : message.attempts.filter((attempt) => attempt.outcome === 'UNKNOWN').length,
         priorAcceptedAttempts: message.attempts.filter((attempt) => attempt.outcome === 'ACCEPTED').length,
+        snapshotRevoked: Boolean(message.snapshot?.revokedAt),
       });
       if (!decision.allowed) {
         await tx.message.update({ where: { id: message.id }, data: { state: 'SUPPRESSED', deliveryState: 'SUPPRESSED', suppressionReason: decision.reason } });
@@ -188,7 +189,7 @@ export class DeliveryService implements JobHandler {
         await tx.$queryRaw`SELECT id FROM contacts WHERE id = ${message.contactId}::uuid AND organization_id = ${organizationId}::uuid FOR UPDATE`;
         // The lock may have been waited for: deadlines are judged on the clock as of this moment.
         const handoffAt = this.clock.now();
-        const fresh = await tx.message.findUnique({ where: { id: message.id }, include: { contact: true, connection: true, run: true } });
+        const fresh = await tx.message.findUnique({ where: { id: message.id }, include: { contact: true, connection: true, run: true, snapshot: { select: { revokedAt: true } } } });
         const conversation = await tx.conversation.findUnique({ where: { organizationId_contactId: { organizationId, contactId: message.contactId } } });
         const decision: PolicyDecision =
           !fresh || fresh.state !== 'SENDING'
@@ -208,6 +209,7 @@ export class DeliveryService implements JobHandler {
                 needsFlow: rendered.type === 'flow',
                 priorUnknownAttempts: 0,
                 priorAcceptedAttempts: 0,
+                snapshotRevoked: Boolean(fresh.snapshot?.revokedAt),
               });
         if (!decision.allowed) {
           await tx.messageAttempt.update({ where: { id: attempt.id }, data: { outcome: 'FAILED', finishedAt: this.clock.now(), errorCode: decision.reason, retryable: false } });
@@ -399,7 +401,11 @@ export class DeliveryService implements JobHandler {
     return null;
   }
 
+  /** Reflect a message outcome on the invitation it carries and, for a results notice, on the recipient row reporting reads. */
   private async markInvitation(tx: TenantTx, messageId: string, state: 'ACCEPTED' | 'FAILED' | 'UNKNOWN' | 'SUPPRESSED', reason: string | null): Promise<void> {
     await tx.invitation.updateMany({ where: { messageId }, data: { state, stateReason: reason } });
+    if (state !== 'ACCEPTED') {
+      await tx.resultRecipient.updateMany({ where: { invitationMessageId: messageId, accessState: { in: ['PENDING', 'INVITED'] } }, data: { accessState: state, suppressionReason: reason } });
+    }
   }
 }
