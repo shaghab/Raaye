@@ -70,8 +70,18 @@
     {
       "round": 7,
       "headSha": "42d48de",
+      "status": "completed",
+      "trigger": "@codex review comment 6051750131",
+      "reviewedAt": "2026-10-08T03:50:52Z",
+      "findings": 1,
+      "outcome": "P2 (a results menu built on a permission read that a concurrent results withdrawal invalidated before the menu was inserted, a consequence of the round-3 fix) fixed in-PR: inbound processing runs under the contact lock"
+    },
+    {
+      "round": 8,
+      "headSha": "c620e72",
+      "requestedAt": "2026-10-08T04:22:00+00:00",
       "status": "running",
-      "trigger": "@codex review comment 6051750131"
+      "trigger": "@codex review comment 6052041846"
     }
   ],
   "processedFindings": [
@@ -191,9 +201,21 @@
       "commit": "42d48de",
       "resolved": true,
       "replyCommentId": 4214364099
+    },
+    {
+      "commentId": 4214385348,
+      "threadId": "PRRT_kwDOU--Sjc6qL2xf",
+      "priority": "P2",
+      "file": "libs/server/src/conversation/conversation.service.ts",
+      "title": "Recheck results consent when sending menus",
+      "action": "fixed",
+      "reason": "consequence of this pull request",
+      "commit": "c620e72",
+      "resolved": true,
+      "replyCommentId": 4214530037
     }
   ],
   "issues": [],
   "blockers": [],
-  "updatedAt": "2026-10-08T03:46:32.564959+00:00"
+  "updatedAt": "2026-10-08T04:12:15.061235+00:00"
 }
