@@ -38,6 +38,20 @@ describe('sending policy gate (R15, R22, R45, R57)', () => {
     expect(evaluateSendPolicy({ ...base, isTest: true, providerMode: 'live', contact: { ...base.contact, consentInvitations: 'UNKNOWN' } })).toEqual({ allowed: false, reason: 'CONTACT_CONSENT_MISSING' });
   });
 
+  it('governs result notices by the results scope alone while STOP still blocks them (R51)', () => {
+    const results: PolicyInput = { ...base, kind: 'RESULTS_INVITATION', run: null };
+    // Permission for results sharing does not depend on the invitation scope.
+    expect(evaluateSendPolicy({ ...results, contact: { ...base.contact, consentInvitations: 'UNKNOWN' } })).toEqual({ allowed: true });
+    expect(evaluateSendPolicy({ ...results, contact: { ...base.contact, consentInvitations: 'WITHDRAWN' } })).toEqual({ allowed: true });
+    expect(evaluateSendPolicy({ ...results, kind: 'RESULTS_CONTENT', isFreeForm: true, lastInboundAt: base.now, contact: { ...base.contact, consentInvitations: 'WITHDRAWN' } })).toEqual({ allowed: true });
+    expect(evaluateSendPolicy({ ...results, contact: { ...base.contact, consentResults: 'UNKNOWN' } })).toEqual({ allowed: false, reason: 'CONTACT_CONSENT_MISSING' });
+    expect(evaluateSendPolicy({ ...results, contact: { ...base.contact, consentResults: 'WITHDRAWN' } })).toEqual({ allowed: false, reason: 'CONTACT_WITHDRAWN' });
+    // STOP withdraws every scope.
+    expect(evaluateSendPolicy({ ...results, contact: { ...base.contact, consentInvitations: 'WITHDRAWN', consentResults: 'WITHDRAWN' } })).toEqual({ allowed: false, reason: 'CONTACT_WITHDRAWN' });
+    // Survey invitations are not unlocked by results permission.
+    expect(evaluateSendPolicy({ ...base, contact: { ...base.contact, consentInvitations: 'UNKNOWN', consentResults: 'GRANTED' } })).toEqual({ allowed: false, reason: 'CONTACT_CONSENT_MISSING' });
+  });
+
   it('requires templates outside the service window and approved bindings', () => {
     expect(evaluateSendPolicy({ ...base, kind: 'QUESTION', isFreeForm: true, lastInboundAt: null })).toEqual({ allowed: false, reason: 'SERVICE_WINDOW_CLOSED' });
     expect(evaluateSendPolicy({ ...base, kind: 'QUESTION', isFreeForm: true, lastInboundAt: new Date('2026-10-09T09:00:01Z') })).toEqual({ allowed: true });

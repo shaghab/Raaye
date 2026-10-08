@@ -234,6 +234,8 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     await request(t.server).post(`/api/v1/surveys/${surveyId}/close`).set('Authorization', manager.authorization).expect(200);
     // P2's service window is long closed: the results invitation must use a template (R52).
     await t.prisma.conversation.update({ where: { organizationId_contactId: { organizationId: orgId, contactId: people['P2'] } }, data: { lastInboundAt: new Date('2026-10-08T00:00:00Z') } });
+    // P3 withdrew survey invitations only: results sharing has its own permission scope and still reaches them.
+    await request(t.server).post(`/api/v1/contacts/${people['P3']}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_INVITATIONS'], type: 'WITHDRAWN', evidenceAt: '2026-10-09T00:00:00Z', evidenceReference: 'Call' }).expect(201);
     const preview = (await request(t.server).post(`/api/v1/surveys/${surveyId}/results-preview`).set('Authorization', admin.authorization).expect(200)).body;
     expect(preview).toMatchObject({ canShare: true, eligibleRecipients: 3, excluded: { RESULTS_CONSENT_MISSING: 2 }, minimumRespondents: 5, alreadyShared: false });
     expect(preview.questions.map((question: { shareable: boolean }) => question.shareable)).toEqual([true, false, false]);
@@ -256,6 +258,9 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     expect(p2Invite.state).toBe('ACCEPTED');
     const p1Invite = await t.prisma.message.findFirstOrThrow({ where: { kind: 'RESULTS_INVITATION', contactId: people['P1'] } });
     expect((p1Invite.rendered as { type: string }).type).toBe('buttons');
+    // Every recipient the preview counted as eligible was actually sent to, P3 included.
+    expect((await t.prisma.message.findFirstOrThrow({ where: { kind: 'RESULTS_INVITATION', contactId: people['P3'] } })).state).toBe('ACCEPTED');
+    expect(await t.prisma.message.count({ where: { kind: 'RESULTS_INVITATION', snapshotId: shared.snapshot.id, state: 'ACCEPTED' } })).toBe(preview.eligibleRecipients);
     // P1 requests the results: the bound snapshot is delivered as chunked text (R52).
     await tap(people['P1'], 'View results');
     const content = (await outbound(people['P1'])).filter((message) => message.kind === 'RESULTS_CONTENT');
