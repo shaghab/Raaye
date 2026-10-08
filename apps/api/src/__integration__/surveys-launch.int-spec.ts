@@ -464,6 +464,50 @@ describe('survey authoring, audience, launch and lifecycle (R20-R30, R43-R45, R5
     await request(t.server).post(`/api/v1/surveys/${id}/close`).set('Authorization', manager.authorization).expect(200);
   });
 
+  it('a draft edit and a test send of the same survey serialize: the test run never mixes two revisions (R29, R30)', async () => {
+    const id = await createSurvey('Edit versus test');
+    const edit = (questions: typeof FIVE_TYPES) => request(t.server).patch(`/api/v1/surveys/${id}`).set('Authorization', manager.authorization).send({ questions }).then((response) => response);
+    const sendTest = () => request(t.server).post(`/api/v1/surveys/${id}/test-runs`).set('Authorization', manager.authorization).send({ contactIds: [contacts['Ayesha']] }).then((response) => response);
+    const detail = async () => (await request(t.server).get(`/api/v1/surveys/${id}`).set('Authorization', admin.authorization).expect(200)).body;
+    // The edit reaches the row first: the test send validated the content before the edit and is refused.
+    let hold = await holdSurvey(id);
+    const editFirst = edit(FIVE_TYPES.slice(0, 2));
+    await untilLockWaiters(1);
+    const testSecond = sendTest();
+    await untilLockWaiters(2);
+    hold.release();
+    await hold.held;
+    expect((await editFirst).status).toBe(200);
+    const refused = await testSecond;
+    expect(refused.status).toBe(409);
+    expect(refused.body.code).toBe('SURVEY_STATE_INVALID');
+    expect(await t.prisma.surveyRun.count({ where: { surveyId: id, kind: 'TEST' } })).toBe(0);
+    let current = await detail();
+    expect(current.revision.revisionNumber).toBe(1);
+    expect(current.revision.questions).toHaveLength(2);
+    // The test send reaches the row first: the run keeps the content it validated and the edit moves to a new revision.
+    hold = await holdSurvey(id);
+    const testFirst = sendTest();
+    await untilLockWaiters(1);
+    const editSecond = edit(FIVE_TYPES);
+    await untilLockWaiters(2);
+    hold.release();
+    await hold.held;
+    expect((await testFirst).status).toBe(201);
+    expect((await editSecond).status).toBe(200);
+    const run = await t.prisma.surveyRun.findFirstOrThrow({ where: { surveyId: id, kind: 'TEST' } });
+    expect(await t.prisma.question.count({ where: { revisionId: run.revisionId } })).toBe(2);
+    current = await detail();
+    expect(current.revision.revisionNumber).toBe(2);
+    expect(current.revision.questions).toHaveLength(5);
+    expect(run.revisionId).not.toBe(current.revision.id);
+    // The test invitation renders what the test run validated.
+    await drainJobs(t);
+    const invitation = await t.prisma.message.findFirstOrThrow({ where: { runId: run.id, kind: 'INVITATION' } });
+    expect(invitation.state).toBe('ACCEPTED');
+    expect((invitation.rendered as { previewText?: string }).previewText ?? '').toContain('[TEST]');
+  });
+
   it('archiving cancels an active test run and its queued test sends (R30, R55)', async () => {
     await drainJobs(t);
     const id = await createSurvey('Archived with test run', { audience: { mode: 'SELECTED', contactIds: [contacts['Ehsan']] } });
