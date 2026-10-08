@@ -60,4 +60,18 @@ describe('edit window (R34, R35)', () => {
       isStaleReply({ incomingProviderAt: plus(6), incomingReceivedAt: plus(8), currentProviderAt: plus(6), currentReceivedAt: plus(7) }),
     ).toBe(false);
   });
+
+  it('breaks equal provider timestamps by the order of arrival before the receipt time (R39)', () => {
+    // One webhook batch: the same provider second and one receipt time for every message; the later arrival wins.
+    const batch = { incomingProviderAt: plus(6), incomingReceivedAt: plus(7), currentProviderAt: plus(6), currentReceivedAt: plus(7) };
+    expect(isStaleReply({ ...batch, incomingSequence: 10n, currentSequence: 11n })).toBe(true);
+    expect(isStaleReply({ ...batch, incomingSequence: 12, currentSequence: 11n })).toBe(false);
+    // The order of arrival outranks the receipt time, which concurrent deliveries can stamp out of order.
+    expect(isStaleReply({ ...batch, incomingReceivedAt: plus(9), incomingSequence: 10n, currentSequence: 11n })).toBe(true);
+    // A clearly newer provider timestamp still wins whatever the order of arrival.
+    expect(isStaleReply({ ...batch, incomingProviderAt: plus(8), incomingSequence: 10n, currentSequence: 11n })).toBe(false);
+    // Without a position on one side (an answer recorded before positions were kept) the receipt time decides, and a tie stands.
+    expect(isStaleReply({ ...batch, incomingSequence: 10n, currentSequence: null })).toBe(false);
+    expect(isStaleReply({ ...batch, incomingReceivedAt: plus(6), incomingSequence: 10n })).toBe(true);
+  });
 });

@@ -470,7 +470,7 @@ export class ConversationService implements JobHandler {
     const participation = await s.tx.participation.findUnique({ where: { id: participationId }, include: PARTICIPATION_INCLUDE });
     if (!participation || participation.contactId !== s.contact?.id) return this.invalidAction(s);
     const title = pickLocale(participation.revision.title as LocalizedText, participation.revision.locale);
-    const result = await this.answers.submit(s.tx, { organizationId: s.ctx.organizationId, participationId, questionId, optionIds, source, inboundEventId: s.event.id, providerAt: s.event.providerAt, receivedAt: s.event.receivedAt });
+    const result = await this.answers.submit(s.tx, { organizationId: s.ctx.organizationId, participationId, questionId, optionIds, source, inboundEventId: s.event.id, providerAt: s.event.providerAt, receivedAt: s.event.receivedAt, ingressSequence: s.event.ingressSequence });
     const isTest = participation.run.kind === 'TEST';
     const prefix = isTest ? `${copy.testLabel} ` : '';
     const meta = { runId: participation.runId, participationId, isTest };

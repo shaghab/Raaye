@@ -15,6 +15,8 @@ export interface SubmitAnswerInput {
   inboundEventId: string | null;
   providerAt: Date | null;
   receivedAt: Date;
+  /** The inbox position of the inbound event: the order of arrival, which decides between replies with the same provider timestamp. */
+  ingressSequence: bigint | null;
 }
 
 export type SubmitAnswerResult =
@@ -68,6 +70,7 @@ export class AnswerService {
             currentRevisionNumber: 1,
             currentProviderAt: input.providerAt,
             currentReceivedAt: input.receivedAt,
+            currentIngressSequence: input.ingressSequence,
           },
         });
         await this.writeRevision(tx, input, answer.id, question.id, 1, now, validation.optionIds, validation.ratingValue);
@@ -92,7 +95,7 @@ export class AnswerService {
     const current = existing ?? (await tx.answer.findUniqueOrThrow({ where: { organizationId_participationId_questionId: { organizationId: input.organizationId, participationId: participation.id, questionId: question.id } }, include: { revisions: { where: { isCurrent: true }, include: { selections: true } } } }));
     const currentSelection = current.revisions[0]?.selections.map((selection) => selection.optionId) ?? [];
     if (selectionsEqual(currentSelection, validation.optionIds)) return { outcome: 'UNCHANGED', answerId: current.id };
-    if (isStaleReply({ incomingProviderAt: input.providerAt, incomingReceivedAt: input.receivedAt, currentProviderAt: current.currentProviderAt, currentReceivedAt: current.currentReceivedAt })) {
+    if (isStaleReply({ incomingProviderAt: input.providerAt, incomingReceivedAt: input.receivedAt, incomingSequence: input.ingressSequence, currentProviderAt: current.currentProviderAt, currentReceivedAt: current.currentReceivedAt, currentSequence: current.currentIngressSequence })) {
       return { outcome: 'REJECTED', code: 'ANSWER_STALE', message: 'A newer answer is already recorded' };
     }
     const decision = evaluateEdit({ now, runState: run.state, closesAt: run.closesAt, editExpiresAt: current.editExpiresAt });
@@ -100,7 +103,7 @@ export class AnswerService {
     const revisionNumber = current.currentRevisionNumber + 1;
     await tx.answerRevision.updateMany({ where: { answerId: current.id, isCurrent: true }, data: { isCurrent: false } });
     await this.writeRevision(tx, input, current.id, question.id, revisionNumber, now, validation.optionIds, validation.ratingValue);
-    await tx.answer.update({ where: { id: current.id }, data: { currentRevisionNumber: revisionNumber, currentProviderAt: input.providerAt, currentReceivedAt: input.receivedAt } });
+    await tx.answer.update({ where: { id: current.id }, data: { currentRevisionNumber: revisionNumber, currentProviderAt: input.providerAt, currentReceivedAt: input.receivedAt, currentIngressSequence: input.ingressSequence } });
     await tx.participation.update({ where: { id: participation.id }, data: { lastInboundAt: input.receivedAt } });
     return { outcome: 'EDITED', answerId: current.id, completed: participation.state === 'COMPLETED' };
   }

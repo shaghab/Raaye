@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import request from 'supertest';
 import { JobRunner, createTenantDb, signWebhookBody } from '@raaye/server';
 import { drainJobs } from '../testing/jobs';
@@ -576,6 +578,48 @@ describe('participant conversation engine (R15-R22, R31-R42)', () => {
     expect((await enrollment()).lastInboundAt).toEqual(t.clock.now());
     expect((await placeholderConversation()).lastInboundAt).toEqual(t.clock.now());
     expect((await outbound(placeholder.id)).map((message) => message.state)).toEqual(['ACCEPTED', 'ACCEPTED']);
+  });
+
+  it('two replies with the same provider timestamp from one batch keep the later arrival, even when processed in reverse order (R37, R39)', async () => {
+    const tie = await createContact('Tie Tariq', '+923001000094', true);
+    const { runId: tieRun } = await launchSurvey('Tie survey', [tie]);
+    await tapLabel(tie, 'Start survey');
+    await tapLabel(tie, 'Skip');
+    const question = await last(tie, (message) => message.kind === 'QUESTION');
+    expect(question.text).toContain('Question 1 of 5');
+    const yes = question.controls.find((control) => control.label === 'Yes');
+    const no = question.controls.find((control) => control.label === 'No');
+    // Both taps carry the same provider second and are received together; the inbox numbers them in order of arrival.
+    const first = (await sim('tap', { contactId: tie, messageId: question.id, controlId: yes?.id }).expect(200)).body as { eventId: string };
+    const second = (await sim('tap', { contactId: tie, messageId: question.id, controlId: no?.id }).expect(200)).body as { eventId: string };
+    const events = await t.prisma.inboundEvent.findMany({ where: { id: { in: [first.eventId, second.eventId] } }, orderBy: { ingressSequence: 'asc' } });
+    expect(events.map((event) => event.id)).toEqual([first.eventId, second.eventId]);
+    expect(new Set(events.map((event) => event.providerAt.toISOString())).size).toBe(1);
+    expect(new Set(events.map((event) => event.receivedAt.toISOString())).size).toBe(1);
+    // A second worker processes the later arrival first.
+    const runner = t.app.get(JobRunner);
+    const jobOf = async (eventId: string) => (await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `inbound:${eventId}` } })).id;
+    expect(await runner.runJob(await jobOf(second.eventId))).toBe('DONE');
+    expect(await runner.runJob(await jobOf(first.eventId))).toBe('DONE');
+    await drainJobs(t);
+    const participation = await t.prisma.participation.findFirstOrThrow({ where: { runId: tieRun, contactId: tie } });
+    const [answer] = await answersOf(participation.id);
+    const noOption = await t.prisma.questionOption.findFirstOrThrow({ where: { questionId: answer.questionId, code: 'NO' } });
+    expect(answer.revisions).toHaveLength(1);
+    expect(answer.revisions[0].selections.map((selection) => selection.optionId)).toEqual([noOption.id]);
+    expect(answer.currentIngressSequence).toEqual(events[1].ingressSequence);
+    // The earlier arrival was answered as stale, never recorded.
+    expect((await outbound(tie)).some((message) => message.text.includes('newer answer'))).toBe(true);
+    // The migration's backfill gives an answer recorded before positions were kept the position of its current revision's event.
+    await t.prisma.answer.update({ where: { id: answer.id }, data: { currentIngressSequence: null } });
+    const migration = readFileSync(path.resolve(__dirname, '../../../../prisma/migrations/20261008050000_answer_ingress_sequence/migration.sql'), 'utf8');
+    const backfill = migration
+      .split(/;\s*\n/)
+      .map((statement) => statement.replace(/^\s*--.*$/gm, '').trim())
+      .filter((statement) => statement.startsWith('UPDATE'));
+    expect(backfill).toHaveLength(1);
+    await t.prisma.$executeRawUnsafe(backfill[0]);
+    expect((await t.prisma.answer.findUniqueOrThrow({ where: { id: answer.id } })).currentIngressSequence).toEqual(events[1].ingressSequence);
   });
 
   it('internal task endpoints reject untrusted callers (R58)', async () => {

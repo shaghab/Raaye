@@ -47,19 +47,24 @@ export function evaluateFirstAnswer(ctx: Omit<EditContext, 'editExpiresAt'>): An
 
 /**
  * Ordering rule for distinct replies: a reply whose provider timestamp is clearly older
- * than the currently accepted revision cannot overwrite it. With equal provider
- * timestamps, ingress order decides (an older ingress loses).
+ * than the currently accepted revision cannot overwrite it. With equal provider timestamps
+ * (the provider stamps whole seconds) the order of arrival decides: the inbox position of
+ * each message, which also orders the messages of one webhook batch, all stamped with the
+ * same receipt time. Without a position on either side the receipt time decides, as before.
  */
 export function isStaleReply(params: {
   incomingProviderAt: Date | null;
   incomingReceivedAt: Date;
+  incomingSequence?: bigint | number | null;
   currentProviderAt: Date | null;
   currentReceivedAt: Date;
+  currentSequence?: bigint | number | null;
 }): boolean {
-  const { incomingProviderAt, incomingReceivedAt, currentProviderAt, currentReceivedAt } = params;
+  const { incomingProviderAt, incomingReceivedAt, incomingSequence, currentProviderAt, currentReceivedAt, currentSequence } = params;
   if (incomingProviderAt && currentProviderAt) {
     if (incomingProviderAt.getTime() < currentProviderAt.getTime()) return true;
     if (incomingProviderAt.getTime() > currentProviderAt.getTime()) return false;
   }
+  if (incomingSequence != null && currentSequence != null) return BigInt(incomingSequence) < BigInt(currentSequence);
   return incomingReceivedAt.getTime() < currentReceivedAt.getTime();
 }
