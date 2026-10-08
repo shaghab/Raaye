@@ -128,8 +128,9 @@ export class DeliveryService implements JobHandler {
     const mode = this.provider.mode;
     const ctx: SystemContext = { organizationId, correlationId: messageId, actor: 'SYSTEM' };
     // Claim the message under the contact row lock. Consent decisions (STOP, staff withdrawal,
-    // import attestation) take the same lock, so the policy is evaluated on state that no decision
-    // can invalidate before the hand-off, and a message canceled meanwhile is never revived.
+    // import attestation), archive, phone changes and the processing of an inbound message take the
+    // same lock, so the policy is evaluated on state that no decision can invalidate before the
+    // hand-off, and a message canceled meanwhile is never revived.
     const claim = await db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM contacts WHERE id = ${initial.contactId}::uuid AND organization_id = ${organizationId}::uuid FOR UPDATE`;
       const message = await tx.message.findUnique({ where: { id: messageId }, include: { contact: true, connection: true, run: true, attempts: true, snapshot: { select: { revokedAt: true } } } });

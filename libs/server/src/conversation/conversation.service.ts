@@ -5,6 +5,7 @@ import { AuditService } from '../audit/audit.service';
 import { CLOCK } from '../clock/clock.service';
 import type { SystemContext } from '../common/context';
 import { ConsentService } from '../contacts/consent.service';
+import { lockContact } from '../contacts/contact-lock';
 import type { JobHandler } from '../jobs/job-handler';
 import { JOB_PRIORITY, type ClaimedJob } from '../jobs/jobs.service';
 import { ActionBindingService } from '../messaging/action-bindings';
@@ -91,8 +92,13 @@ export class ConversationService implements JobHandler {
       const now = this.clock.now();
       const phone = waIdToE164(event.senderIdentity);
       const found = phone ? await tx.contact.findFirst({ where: { OR: [{ phoneE164: phone }, { providerIdentity: event.senderIdentity }] } }) : null;
-      // A placeholder created to answer an unknown sender is not a real contact yet.
-      const contact = found && !isPlaceholder(found) ? found : null;
+      // A placeholder created to answer an unknown sender is not a real contact yet. A known contact
+      // is processed under its row lock, which consent decisions, archive, phone changes and the
+      // hand-off take too: the permission read here is what the latest decision left, and a
+      // withdrawal that arrives meanwhile waits, then cancels every reply queued below. A contact
+      // whose number changed while the lock was waited for is no longer this sender.
+      const locked = found && !isPlaceholder(found) ? await lockContact(tx, found.id) : null;
+      const contact = locked && (locked.phoneE164 === phone || locked.providerIdentity === event.senderIdentity) ? locked : null;
       let conversation: Conversation | null = null;
       const inboundAt = event.providerAt ?? event.receivedAt;
       if (contact) {

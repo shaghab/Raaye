@@ -378,6 +378,47 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     expect(denied?.text).toContain('no longer available');
     expect(denied?.controls ?? []).toHaveLength(0);
     await request(t.server).post(`/api/v1/contacts/${people['P1']}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_RESULTS'], type: 'GRANTED', evidenceAt: '2026-10-09T12:50:00Z', evidenceReference: 'Signed form', reviewedNewEvidence: true }).expect(201);
+    // A results withdrawal that arrives while a RESULTS command is being processed. The processing holds the contact
+    // lock from before it reads the permission until it has queued the menu, so the withdrawal waits for it and then
+    // cancels that menu and expires its controls; nothing built on the earlier read can leave. The processing is held
+    // here at its conversation update, after the permission read, until the withdrawal is seen waiting for the lock.
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const lockWaiters = async () => (await t.prisma.$queryRaw<{ waiting: number }[]>`SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`)[0]?.waiting ?? 0;
+    const untilLockWaiters = async (count: number) => {
+      for (let i = 0; i < 300 && (await lockWaiters()) < count; i += 1) await sleep(10);
+    };
+    let releaseConversation: () => void = () => undefined;
+    const conversationHeld = new Promise<void>((resolve) => {
+      releaseConversation = resolve;
+    });
+    const holdingConversation = t.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM conversations WHERE contact_id = ${people['P1']}::uuid FOR UPDATE`;
+        await conversationHeld;
+      },
+      { timeout: 20_000 },
+    );
+    for (let i = 0; i < 300; i += 1) {
+      const free = await t.prisma.$queryRaw<{ id: string }[]>`SELECT id FROM conversations WHERE contact_id = ${people['P1']}::uuid FOR UPDATE SKIP LOCKED`;
+      if (free.length === 0) break;
+      await sleep(10);
+    }
+    const { eventId: racedEvent } = (await sim('text', { contactId: people['P1'], text: 'RESULTS' }).expect(200)).body as { eventId: string };
+    const processing = runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `inbound:${racedEvent}` } })).id);
+    await untilLockWaiters(1);
+    const withdrawing = withdraw('P1', ['SURVEY_RESULTS'], '2026-10-09T12:55:00Z').then((response) => response.status);
+    await untilLockWaiters(2);
+    releaseConversation();
+    await holdingConversation;
+    expect(await processing).toBe('DONE');
+    expect(await withdrawing).toBe(201);
+    const racedMenu = await t.prisma.message.findUniqueOrThrow({ where: { dedupeKey: resultsReplyKey('menu', racedEvent) } });
+    expect(racedMenu).toMatchObject({ kind: 'COMMAND_REPLY', state: 'CANCELED', suppressionReason: 'CONTACT_WITHDRAWN' });
+    expect((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `send:${racedMenu.id}` } })).status).toBe('CANCELED');
+    expect(await t.prisma.messageAttempt.count({ where: { messageId: racedMenu.id } })).toBe(0);
+    expect(await t.prisma.actionBinding.count({ where: { contactId: people['P1'], purpose: { in: ['VIEW_RESULTS', 'MENU_SELECT'] }, expiresAt: { gt: t.clock.now() } } })).toBe(0);
+    expect((await t.prisma.contact.findUniqueOrThrow({ where: { id: people['P1'] } })).consentResults).toBe('WITHDRAWN');
+    await request(t.server).post(`/api/v1/contacts/${people['P1']}/consent-events`).set('Authorization', manager.authorization).send({ scopes: ['SURVEY_RESULTS'], type: 'GRANTED', evidenceAt: '2026-10-09T12:58:00Z', evidenceReference: 'Signed form', reviewedNewEvidence: true }).expect(201);
     // A queued reply about a survey (P8's HELP answer) is canceled by an invitation-only withdrawal; the notice stays.
     const { eventId: helpEvent } = (await sim('text', { contactId: people['P8'], text: 'HELP' }).expect(200)).body as { eventId: string };
     expect(await runner.runJob((await t.prisma.job.findUniqueOrThrow({ where: { dedupeKey: `inbound:${helpEvent}` } })).id)).toBe('DONE');
@@ -399,7 +440,6 @@ describe('reporting, exports, result sharing and retention (R06, R30, R46-R54, R
     expect((await t.prisma.resultRecipient.findFirstOrThrow({ where: { snapshotId, contactId: people['P7'] } })).accessState).toBe('VIEWED');
     // A revocation that commits while a worker is handing a notice over: the hand-off holds a share lock on the
     // snapshot, so the revocation waits for the worker's claim and the policy recheck inside the hand-off sees it.
-    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     let release: () => void = () => undefined;
     const released = new Promise<void>((resolve) => {
       release = resolve;

@@ -19,6 +19,7 @@ import { TenantDbFactory } from '../persistence/tenant-db.factory';
 import type { TenantTx } from '../persistence/tenant-db';
 import { ConsentService } from './consent.service';
 import { contactFilterWhere, searchWhere } from './contact-filter';
+import { lockContact } from './contact-lock';
 import { cancelPendingOutreach } from './outreach-cancellation';
 
 const contactInclude = {
@@ -234,6 +235,8 @@ export class ContactsService {
     try {
       await db.$transaction(async (tx) => {
         if (newPhone) {
+          // Under the contact lock, so a reply an inbound message is queuing at this moment is canceled too.
+          await lockContact(tx, id);
           data.phoneE164 = newPhone;
           data.providerIdentity = null;
           changed.push('phone');

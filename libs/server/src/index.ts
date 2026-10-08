@@ -24,6 +24,7 @@ export * from './contacts/consent.service';
 export * from './contacts/groups-tags.service';
 export * from './contacts/import.service';
 export * from './contacts/contact-filter';
+export * from './contacts/contact-lock';
 export * from './contacts/outreach-cancellation';
 export * from './jobs/jobs.service';
 export * from './jobs/job-handler';
