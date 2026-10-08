@@ -1,0 +1,27 @@
+{
+  "branch": "claude/great-ptolemy-ro6mqe",
+  "pullRequest": {
+    "number": 27,
+    "url": "https://github.com/shaghab/Raaye/pull/27",
+    "base": "main",
+    "closes": [
+      7,
+      17,
+      23,
+      2
+    ]
+  },
+  "reviewRequests": [
+    {
+      "round": 1,
+      "headSha": "4efe564",
+      "requestedAt": "2026-10-08T07:19:08.951342+00:00",
+      "status": "running",
+      "trigger": "pull request opened (Codex reviews new pull requests automatically)"
+    }
+  ],
+  "processedFindings": [],
+  "issues": [],
+  "blockers": [],
+  "updatedAt": "2026-10-08T07:19:08.951342+00:00"
+}
