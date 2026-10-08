@@ -94,6 +94,10 @@ services:
     image: raaye-app:local
     command: ["worker"]
     environment: *app-env
+    # The image's health check probes the API port, which the worker never opens: inherited, it would
+    # report the worker unhealthy for its whole life. `restart` covers a crashed worker.
+    healthcheck:
+      disable: true
     depends_on:
       bootstrap:
         condition: service_completed_successfully
