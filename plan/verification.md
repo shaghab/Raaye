@@ -234,3 +234,18 @@ Branch restarted from the merged `main` (c8802cd). Checks run on the working tre
 | Live-only paths | The readiness rules for live senders (template purposes, the profile Flow) and the conversation's profile-Flow guard apply only in live mode, which the integration harness cannot boot (it requires live auth and real secrets); they are covered by the unit tests above with live inputs, and the mock-mode suites prove the wiring (launch, test run, activation, survey detail and sharing call the same check). |
 
 Not run: live Meta and GCP verification remain external as before.
+
+## Review loop for pull request #25 (results permission scope, readiness by purpose, profile Flow, revocation)
+
+| Round | Commit | Outcome |
+| --- | --- | --- |
+| 1 (pull request opened) | 7b2a567 | Two P1 and one P2, all fixed in 527ea06: an invitation-only withdrawal canceled queued result notices and View results controls (cancellation now follows the withdrawn scopes); a revocation was not serialized with the hand-off (the hand-off holds a share lock on the snapshot row and the revocation takes the exclusive lock first); an accepted retry did not restore the recipient (an accepted send makes the recipient invited again, never moving a viewer back). |
+| 2 | 527ea06 | P1: a `FAILED` status callback on an accepted notice removed the respondent's access with no retry possible. de5026f keeps a callback failure as delivery evidence on the message without touching the recipient. |
+| 3 | de5026f | Two P2, both consequences of the recipient projection: a valid results re-grant could not restore access to an already-shared snapshot; an invitation-only withdrawal canceled a queued results menu. 9f0cd89 makes access follow the respondent's current results permission and leaves replies about results alone on an invitation-only withdrawal. |
+| 4 | 9f0cd89 | P2: an invitation-only withdrawal left queued survey replies to be sent with expired controls. 23cb902 cancels every queued survey message and recognizes the messages about results by a shared dedupe-key prefix. |
+| 5 | 23cb902 | Two P2: the RESULTS command built a menu for a respondent without current results permission; a results-only withdrawal left a queued results menu. 8da35c4 checks the permission before anything is built and cancels every queued message about results. 7c3c206 only makes two Playwright journeys find the seeded survey by search. |
+| 6 | 7c3c206 | P2: a paginated results menu's page control survived a results withdrawal and skipped the permission check. 42d48de flags it as a results control and rechecks the permission on every page. |
+| 7 | 42d48de (reviewed at a46b9c1, which adds only `plan/`) | P2: a results menu could be built on a permission read that a concurrent results withdrawal invalidated before the menu was inserted. c620e72 processes an inbound message from a known contact under the contact row lock, and a phone change takes that lock before it cancels anything. |
+| 8 | c620e72 | No findings. |
+
+All eleven review threads are resolved. On c620e72: `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 80, integration 14 suites / 90 tests, WhatsApp assets 8 checks, production builds) and `pnpm test:e2e` passed (9 journeys). The commits that record the review state change only `plan/` files and were not sent for a further round.
