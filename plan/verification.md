@@ -264,3 +264,12 @@ Branch restarted from the merged `main` (42d414c). Checks run on the working tre
 | Migration | `20261008050000_answer_ingress_sequence` adds `answers.current_ingress_sequence` and backfills it from the current revision's inbound event; applied to the test database by the integration global setup and to the development database before the Playwright run. |
 
 Not run: live Meta verification remains external as before.
+
+## Review loop for pull request #26 (service window, reply ordering, delivery consistency)
+
+| Round | Commit | Outcome |
+| --- | --- | --- |
+| 1 (pull request opened) | e4de1b3 | P2: a read or delivered receipt that superseded a failure report left the failure's error code on the message, so the dispatch table showed a delivered chip next to a provider error and the diagnostics depended on callback order (a consequence of this change). e85c60c clears the projected error code in the same update; the status-order test asserts the cleared code, identical diagnostics for both orders, the dispatch rows and the retained status event. |
+| 2 | e85c60c (reviewed at b31dd72, which adds only `plan/`) | No findings. |
+
+The one review thread is resolved. On e85c60c: `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 81, integration 14 suites / 93 tests, WhatsApp assets 8 checks, production builds) and `pnpm test:e2e` passed (9 journeys). The commits that record the review state change only `plan/` files and were not sent for a further round.
