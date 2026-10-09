@@ -329,10 +329,12 @@ describe('two organizations with the same phone number stay separate (R07, R08, 
 
     // 3. A status callback for B's message, posted to A's connection, cannot change B's message.
     const bInvitation = await t.prisma.message.findFirstOrThrow({ where: { organizationId: B.orgId, kind: 'INVITATION' } });
+    const bProviderId = bInvitation.providerMessageId;
+    if (!bProviderId) throw new Error('B invitation was never accepted by the mock provider, so a status callback for it proves nothing');
     expect(bInvitation.deliveryState).not.toBe('READ');
-    await post(A, A.phoneNumberId, { statuses: [{ id: bInvitation.providerMessageId, status: 'read', timestamp: stamp, recipient_id: WA_ID }] });
+    await post(A, A.phoneNumberId, { statuses: [{ id: bProviderId, status: 'read', timestamp: stamp, recipient_id: WA_ID }] });
     expect((await t.prisma.message.findUniqueOrThrow({ where: { id: bInvitation.id } })).deliveryState).toBe(bInvitation.deliveryState);
-    expect(await t.prisma.messageStatusEvent.count({ where: { organizationId: B.orgId, providerMessageId: bInvitation.providerMessageId, status: 'READ' } })).toBe(0);
+    expect(await t.prisma.messageStatusEvent.count({ where: { organizationId: B.orgId, providerMessageId: bProviderId, status: 'READ' } })).toBe(0);
 
     // 4. STOP from the shared number to B's connection withdraws B's contact and leaves A's contact and A's queued message alone.
     const connection = await t.prisma.messagingConnection.findFirstOrThrow({ where: { organizationId: A.orgId } });
