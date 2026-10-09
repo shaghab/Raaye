@@ -14,6 +14,16 @@ const compose = (...args: string[]) => {
   if (result.status !== 0) throw new Error(`docker compose ${args.join(' ')} failed`);
 };
 
+/** Services of the stack with their reported state and health (Compose v2 prints one JSON object per line). */
+function composeServices(): { Service: string; State: string; Health: string }[] {
+  const result = spawnSync('docker', ['compose', 'ps', '--all', '--format', 'json'], { cwd: root, encoding: 'utf8' });
+  if (result.status !== 0) throw new Error('docker compose ps failed');
+  return result.stdout
+    .split('\n')
+    .filter((line) => line.trim().startsWith('{'))
+    .map((line) => JSON.parse(line) as { Service: string; State: string; Health: string });
+}
+
 async function waitFor(url: string, attempts = 120): Promise<void> {
   for (let i = 0; i < attempts; i += 1) {
     try {
@@ -65,6 +75,16 @@ async function main(): Promise<void> {
   if (after.name !== marker) throw new Error('User-created contact did not survive restart');
   const again = await api<{ total: number }>(token, '/surveys?limit=1');
   if (again.total !== surveys.total) throw new Error('Seed re-run changed survey count');
+  // The API can come back at another container's address (Docker hands out the lowest free one):
+  // stopping both and starting the worker first makes the two swap. The dashboard's proxy has to follow the API.
+  compose('stop', 'api', 'worker');
+  compose('start', 'worker');
+  compose('start', 'api');
+  await waitFor(`${WEB}/api/v1/health/ready`);
+  const afterSwap = await api<{ name: string }>(await signIn('admin@pilap.demo', 'Raaye-Admin-2026!'), `/contacts/${created.id}`);
+  if (afterSwap.name !== marker) throw new Error('Dashboard proxy did not follow the API to its new address');
+  const worker = composeServices().find((service) => service.Service === 'worker');
+  if (!worker || worker.State !== 'running' || worker.Health === 'unhealthy') throw new Error(`Worker is not running cleanly: ${worker?.State} ${worker?.Health}`);
   console.log('Docker smoke test passed');
   if (!keep) compose('down');
 }

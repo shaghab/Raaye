@@ -7,8 +7,8 @@ This document describes a production layout that the code supports. **Nothing he
 | Component | Service | Notes |
 | --- | --- | --- |
 | API | Cloud Run (`apps/api`) | Public HTTPS for the dashboard API and the Meta webhook. Container `raaye-app:<tag>` with command `api`. |
-| Worker | Cloud Run (`apps/worker`) | Receives Cloud Tasks pushes on `/api/v1/internal/jobs/:id/execute` and Cloud Scheduler calls on `/api/v1/internal/sweep`. Same image, command `api` (the internal routes live in the API bundle) or a dedicated service with min instances 0. |
-| Dashboard | Cloud Run (nginx image target `web`) or any static host | `/api` must proxy to the API. |
+| Task receiver | Cloud Run (`apps/api` bundle, command `api`) | Receives Cloud Tasks pushes on `/api/v1/internal/jobs/:id/execute` and Cloud Scheduler calls on `/api/v1/internal/sweep`. The internal routes live in the API bundle, so this is the same image and command as the API: the same service, or a separate one with min instances 0. `WORKER_BASE_URL` is its URL. `apps/worker` (command `worker`) serves no HTTP: it is the polling loop for an always-on instance (`JOB_DRIVER=postgres`) and the one-shot operator commands (`seed`, `sweep`, `run-once`, `retention`, `bootstrap:org`). |
+| Dashboard | Cloud Run (nginx image target `web`) or any static host | The dashboard calls a relative `/api/v1`, so `/api` must reach the API on the dashboard's own origin. The checked-in `infra/docker/nginx.conf` proxies `/api/` only to the Compose service `api:3000` through Docker's resolver (127.0.0.11), and the upstream is not configurable by an environment variable. On Cloud Run, either route `/api/*` to the API service in front of the dashboard (for example an HTTPS load balancer) or replace the proxy block of `nginx.conf` (upstream, resolver, Host header, TLS) before building the `web` target. |
 | Database | Cloud SQL for PostgreSQL 16 | Private IP or the Cloud SQL connector; `DATABASE_URL` with SSL. |
 | Jobs | Cloud Tasks queue + Cloud Scheduler | `JOB_DRIVER=cloud_tasks`; the periodic sweep runs every minute via Scheduler calling `/internal/sweep` with an OIDC token. |
 | Auth | Firebase Authentication (email/password) | `AUTH_MODE=live`, `FIREBASE_PROJECT_ID=<real project>`; password-reset action links use Firebase's hosted pages. |
@@ -23,6 +23,7 @@ WEB_ORIGIN=https://dashboard.example.org
 DATABASE_URL=postgresql://user:pass@/raaye?host=/cloudsql/<project>:<region>:<instance>
 AUTH_MODE=live
 FIREBASE_PROJECT_ID=<firebase project>
+PUBLIC_FIREBASE_API_KEY=<Firebase web API key>   # served to the dashboard by /api/v1/auth/config; not validated at startup
 MESSAGING_MODE=live
 ENABLE_SIMULATOR=false
 ALLOW_DEMO_BOOTSTRAP=false
@@ -36,7 +37,7 @@ INTERNAL_TASK_TOKEN=<32+ random characters>   # fallback shared secret when JOB_
 META_*                                          # see WHATSAPP_SETUP.md
 ```
 
-`loadConfig()` validates everything at startup and refuses production with an emulator host, demo project IDs, simulator routes, demo bootstrap, or missing Meta/Cloud Tasks values.
+`loadConfig()` validates everything at startup and refuses production with an emulator host, demo project IDs, simulator routes or demo bootstrap. It also refuses missing Meta values when `MESSAGING_MODE=live` and missing Cloud Tasks values when `JOB_DRIVER=cloud_tasks`. Production does not force `MESSAGING_MODE=live`: leaving it unset runs the mock provider, so set it explicitly.
 
 ## Task delivery
 

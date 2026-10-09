@@ -295,7 +295,10 @@ export class ContactsService {
     if (!existing) throw notFound('Contact');
     const now = this.clock.now();
     await db.$transaction(async (tx) => {
-      if (!existing.archivedAt) {
+      // Under the contact lock, so a reply an inbound message is queuing at this moment is canceled too, and the
+      // archive state is the one the lock finds: a concurrent archive that committed first is not repeated.
+      const locked = await lockContact(tx, id);
+      if (!locked.archivedAt) {
         await tx.contact.update({ where: { id }, data: { archivedAt: now } });
         await cancelPendingOutreach(tx, id, 'CONTACT_ARCHIVED', now);
       }

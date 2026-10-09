@@ -9,12 +9,12 @@
 ## Tenant isolation
 
 - Every tenant-owned row carries `organization_id`; composite foreign keys and unique constraints are organization-qualified.
-- All domain code receives a scoped Prisma client that injects the organization into every query. Unscoped access is limited to documented control-plane helpers (membership resolution, webhook connection mapping, due-job claims, retention, seed).
-- Integration tests prove two organizations with the same phone number stay separate across direct object access, lists, mutations, relation connects, reporting, exports, workers and webhooks.
+- All domain code receives a scoped Prisma client that injects the organization into every query. Unscoped access (the plain `PrismaService`, outside the scoped client) is limited to control-plane code that runs before an organization is known or across organizations: membership resolution, staff-invitation inspection and acceptance and the `bootstrap:org` command, webhook connection mapping and inbox persistence and quarantine, due-job claims and the periodic sweep, user lookups for display emails, simulator state, the health probe, retention and seed. Business rows are read and written through the scoped client.
+- Integration tests prove two organizations with the same phone number stay separate across direct object access, lists, mutations, relation connects, reporting, exports, workers and webhooks (`tenant-isolation.int-spec.ts`, with `tenant-constraints.int-spec.ts` for the database constraints and `contacts.int-spec.ts` for consent).
 
 ## Participant data
 
-- Raaye is **not anonymous**. Authorized Admins can link answers to contacts; invitations say so. Aggregate views, the 5-respondent cohort threshold and result-sharing minimums reduce disclosure risk but do not guarantee anonymity.
+- Raaye is **not anonymous**. Authorized Admins can link answers to contacts; the participant notice that participants agree to says so, and so does the checked-in invitation template. Aggregate views, the 5-respondent cohort threshold and result-sharing minimums reduce disclosure risk but do not guarantee anonymity.
 - Imported data is not consent. Permission has scope, source, evidence date, wording version and withdrawal history. It is rechecked right before every send. STOP overrides everything and cancels queued sends.
 - Logs, job payloads, URLs and audit metadata contain identifiers, never names, phone numbers or selected answers. No third-party analytics or tracking is included.
 - Raw import files are dropped when processing ends and, together with the staged rows (normalized names and numbers, the row-error report), at the latest 24 hours after upload; raw webhook payloads are purged after 7 days, quarantined payloads after 7 days.
@@ -25,7 +25,7 @@
 
 - Webhook signatures are verified over the exact raw request bytes with a timing-safe comparison before anything is written. Unknown sender connections are quarantined without touching any organization, and so is traffic for a connection an Admin disabled; the send policy refuses to use a disabled sender. A connection whose bound secret reference does not resolve is refused outright; the process-wide `META_APP_SECRET` and `META_WEBHOOK_VERIFY_TOKEN` apply only to a connection that binds no reference.
 - Action tokens are opaque, bound to connection + contact + participation + question, and expire. A reply is attached only where its binding says; never "the most recent survey".
-- Synthetic (seeded) contacts can never be sent to a live provider. Live configuration refuses emulator flags, simulator routes, demo bootstrap and weak internal tokens, and never falls back to mock.
+- Synthetic (seeded) contacts can never be sent to a live provider. Live messaging configuration (`MESSAGING_MODE=live`) refuses the simulator, demo bootstrap, emulator authentication and missing Meta values, and never falls back to mock; a production configuration (`APP_ENV=production`) additionally refuses weak internal task tokens and demo Firebase project ids.
 - The first organization and Admin of a live deployment come from the operator command `bootstrap:org`, which needs database access, issues a single-use 72-hour Admin invitation, refuses once an active Admin exists, writes an audit event and prints the acceptance link once to stdout (never to the structured log). Every later membership comes from an Admin invitation.
 - A timed-out send is recorded as `UNKNOWN`; it is never retried automatically. An Admin must explicitly acknowledge the duplicate risk to retry.
 
