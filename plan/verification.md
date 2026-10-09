@@ -1,8 +1,30 @@
 # Verification record
 
-What actually ran for this build, with outcomes. Environment: Linux sandbox, Node 22.22.0, pnpm 10.28.0, PostgreSQL 16 (host instance for tests, Compose instance for the Docker smoke test), Docker Engine 29 with Compose v2, Firebase Auth emulator (firebase-tools 15.32.1), Chromium (Playwright). Date: 7 October 2026.
+What actually ran for this build, with outcomes. Environment: Linux sandbox, Node 22.22.0, pnpm 10.28.0, PostgreSQL 16 (host instance for tests, Compose instance for the Docker smoke test), Docker Engine 29 with Compose v2, Firebase Auth emulator (firebase-tools 15.32.1), Chromium (Playwright). Dates: 7 and 8 October 2026.
 
-## Summary
+This file is chronological. The closing summary, the suite tables and the lists directly below describe the closing state of the product on merged `main`; the baseline section keeps the summary of the MVP review exactly as it was recorded; everything from "Review round 1" on is the history of the review rounds and follow-ups, kept as written (a correction to an old statement is marked as a correction).
+
+## Summary (closing run on merged main)
+
+Merged `main` at `db934b8` (pull request #27, all review issues closed) plus the eight commits before this record in the closing pull request, up to `2c32aa5`: the Compose fixes found by the Docker smoke (`26fb844`), the R19 assertion (`f2f316c`), the two-organization isolation suite (`8c0fb20`), the explicit contact lock in archive (`cb28569`), the type fix to that suite (`2c32aa5`) and documentation. Every check below ran on `2c32aa5`; the commit of this record changes only documentation. The closing section at the end tells how the run came about, including the failed Docker smoke on `db934b8` and a failed typecheck on `6e267b0` that `2c32aa5` repaired.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Lint (7 projects) | `pnpm lint` (also run with `--skip-nx-cache`) | passed: 0 errors, 2 warnings that predate this record (`apps/api/src/common/zod.ts`: unused `_metadata`; `apps/web-e2e/src/survey-journey.spec.ts`: conditional in a test) |
+| Strict typecheck (apps, libs, test files, e2e) | `pnpm typecheck` (also run with `--skip-nx-cache`) | passed |
+| Unit tests | `pnpm test` | passed: contracts 4, domain 37, server 34, web 6 (81 tests) |
+| Integration tests (real PostgreSQL) | `pnpm test:integration` | passed: 15 suites, 102 tests |
+| WhatsApp asset validation | `pnpm whatsapp:validate` | passed: 8 checks (3 Flows, 3 fixtures, 2 template specs) |
+| Production builds (api, worker, web) | `pnpm build` (also run with `--skip-nx-cache`) | passed; web initial bundle 658.01 kB raw / 160.88 kB transfer |
+| All of the above in one run | `pnpm verify -- --e2e` | passed on `2c32aa5` (lint 4 s, typecheck 18 s, unit tests 15 s, integration tests 69 s, whatsapp assets 2 s, production builds 15 s, e2e journeys 84 s); lint, typecheck and builds can be Nx cache replays in that command, so they were re-run with `--skip-nx-cache` (lint 8 s, typecheck 24 s, build 16 s: all passed) and the unit and integration targets were re-run uncached for the counts above |
+| Playwright critical journeys | `pnpm test:e2e` | passed: 9 journeys (auth/roles 4, bootstrap 1, contacts 2, survey end-to-end 2) |
+| Docker startup smoke | `scripts/docker-smoke.ts` with `docker-compose.yml` | failed on `db934b8`; passed on `26fb844` and again on `2c32aa5` (about 2 minutes with warm image layers): see the closing section. After the fix it passed with the existing Compose volume and again from empty volumes; it covers build, bootstrap (migrate + seed), dashboard and API on 127.0.0.1:8080, emulator sign-in, seeded data, a user-created contact surviving `docker compose restart api worker`, the dashboard following the API after the API and worker swap addresses, the worker not reported unhealthy, and the seed re-run adding nothing |
+| 1,000-contact scenario (R59) | `apps/api/src/__integration__/scale.int-spec.ts` | passed on `2c32aa5`: launch request 667 ms, dispatch (every invitation accepted through the mock provider, including a simulated worker crash and lease recovery, exactly one attempt per logical message) 22.6 s over 900 processed jobs, results query 19 ms, dispatch page of 1,000 recipients. An earlier run of the closing work measured 637 ms, 25.5 s and 21 ms; the figures of the MVP review (664 ms, 22.8 s, 23 ms) predate the contact-lock claim and hand-off, the rank-guarded status projection and the lease-ownership checks |
+| Seed idempotency | the Docker smoke re-runs the seed on every start and checks that the survey count is unchanged | the smoke passed. The second-run figures recorded during the MVP review (`node dist/apps/worker/main.js seed` twice: `contacts: 0`, every survey `skipped`; `seed:scale` twice: `{"created":0,"existing":1000}`) were not re-measured |
+
+## Baseline recorded during the MVP review (7 October 2026)
+
+The summary as it stood when the MVP pull request was reviewed, kept as recorded. Its counts and timings describe that state, not the current repository.
 
 | Check | Command | Result |
 | --- | --- | --- |
@@ -22,22 +44,26 @@ What actually ran for this build, with outcomes. Environment: Linux sandbox, Nod
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
-| `auth-membership.int-spec.ts` | 6 | token verification, membership resolution, role matrix, invitations, last-admin protection including concurrent downgrade/revoke requests, revocation (R03-R06, R09) |
-| `tenant-constraints.int-spec.ts` | 3 | composite foreign keys and unique constraints, scoped client refusing foreign organizations (R07, R08) |
-| `contacts.int-spec.ts` | 15 | contact CRUD, same phone in two organizations, consent evidence and withdrawal, groups/tags, CSV/XLSX import with attestation and invalid rows, interrupted import resumed exactly once per row, crashed/expired/purged imports, rows applied before the marker existed, the migration backfill run against legacy-shaped batches, concurrent runs with a failure, export neutralization (R10-R14, R50, R56) |
-| `surveys-launch.int-spec.ts` | 23 | authoring validation, audience freeze, launch idempotency, scheduling, unschedule, activation/closing jobs, STOP cancelling queued sends, ambiguous send and explicit retry, archive/launch serialization, Viewer draft visibility, status callbacks (concurrent, failed projection replayed by the retry and the sweep) (R15, R21, R23-R29, R43, R44, R55) |
-| `conversation.int-spec.ts` | 11 | Start/intro/profile offer, buttons/list/Flow answers, edit window with injected clock, multi-select validation, resume/switch between surveys, enrollment of unknown senders, STOP/HELP/EDIT commands, duplicate webhooks, signed raw webhook ingress and quarantine (R16-R20, R31-R42, R44) |
-| `reporting.int-spec.ts` | 8 | aggregates with known dataset, breakdowns on frozen profiles with threshold, Admin-only responses with audit, CSV/XLSX exports parsed and checked, result sharing snapshot/template/`View results`/revoke with a respondent who withdrew invitations only, revocation canceling queued notices and the send policy refusing a revoked snapshot, retention cleanup (R06, R30, R46-R54, R56, R58) |
-| `internal.int-spec.ts` | 2 | service-identity guard, idempotent job execution and sweep routes (R55) |
-| `jobs-push.int-spec.ts` | 2 | Cloud Tasks hand-off of pending jobs, scheduled tasks, re-push after retry, rejected pushes left for the sweep, inert under the postgres driver (R55) |
-| `jobs-leases.int-spec.ts` | 3 | a reclaimed lease is not reset by recovery and the previous holder can neither complete nor fail the job; recovery of a dead worker's leases re-queues retryable jobs and fails exhausted ones; the runner reports a lost lease (R43, R55) |
-| `inbox.int-spec.ts` | 2 | inbox row and processing job commit together; duplicate delivery re-enqueues an orphaned pending row (R41, R42) |
-| `scale.int-spec.ts` | 1 | 1,000-contact launch and restart during dispatch (R59) |
+| `auth-membership.int-spec.ts` | 10 | token verification, membership resolution, role matrix, invitations (single use, email binding, expiry, expiry while the acceptance waits for the organization lock or for the invitee's user row), last-admin protection including concurrent downgrade/revoke requests, revocation, concurrent participant-notice versions, Admin-only audit events (R03-R05, R14) |
+| `bootstrap.int-spec.ts` | 3 | first-organization bootstrap: the operator command creates the organization and an Admin invitation that is accepted through the API and refused once an Admin exists; a re-run and an acceptance of the pending link serialize on the organization row; invalid input is rejected with field errors (issue #13) |
+| `tenant-constraints.int-spec.ts` | 3 | composite foreign keys and unique constraints, cross-tenant and cross-question references rejected by the database, scoped client refusing foreign organizations (R07-R09) |
+| `tenant-isolation.int-spec.ts` | 6 | two organizations (Isolation A and B) holding the same phone number, driven only through the HTTP API and signed webhooks: a symmetric table of direct-object requests for surveys, results, breakdowns, dispatch, responses, the four exports, sharing, contacts, consent, messages, groups, tags and simulator state answers 404 in both directions with the target's rows unchanged and control reads succeeding; lists, search, overview and exports contain only the caller's records; relation connects across organizations are refused; reports and exports count only the caller's respondent; forged cross-organization jobs (send, inbound, close, activate) change nothing; signed webhooks from the shared number, a crossed `phone_number_id`, a status callback for the other organization's message and STOP act on the receiving organization only (R07, R08, R58) |
+| `contacts.int-spec.ts` | 15 | contact CRUD, same phone in two organizations, consent evidence and withdrawal, groups/tags, CSV/XLSX import with attestation and invalid rows, interrupted import resumed exactly once per row, crashed/expired/purged imports, rows applied before the marker existed, the migration backfill run against legacy-shaped batches, concurrent runs with a failure, export neutralization (R07, R08, R10-R14, R50, R56) |
+| `surveys-launch.int-spec.ts` | 26 | authoring validation, audience freeze, launch idempotency including concurrent same-key retries, scheduling, unschedule, activation/closing jobs, STOP cancelling queued sends, ambiguous send and explicit retry, archive/launch/test-run serialization and the draft edit racing a test send, Viewer draft visibility, free-form messages outside the service window, a disabled connection, status callbacks (concurrent, a failure and later delivery evidence in any order, failed projection replayed by the retry and the sweep) (R02, R06, R15, R20, R22-R30, R43-R45, R55) |
+| `conversation.int-spec.ts` | 16 | Start/intro/profile offer with staff-managed tags and verified membership untouched, buttons/list/Flow answers, edit window with injected clock, multi-select validation, resume/switch between surveys, enrollment of unknown senders, STOP/HELP/EDIT commands, duplicate webhooks, equal-timestamp replies ordered by arrival, the service window never moving backwards, signed raw webhook ingress and quarantine, internal task routes rejecting untrusted callers (R07, R14-R21, R27, R31-R42, R44, R45, R58) |
+| `reporting.int-spec.ts` | 8 | aggregates with known dataset, breakdowns on frozen profiles with threshold, Admin-only responses with audit, CSV/XLSX exports parsed and checked, result sharing snapshot/template/`View results`/revoke with a respondent who withdrew invitations only, revocation canceling queued notices and the send policy refusing a revoked snapshot, results menus following results permission, retention cleanup (R06, R30, R46-R54, R56) |
+| `messaging-config.int-spec.ts` | 2 | the missing sender is reported, created on the first Settings save and never duplicated; concurrent first saves create exactly one sender (R22, R57) |
+| `webhook-secrets.int-spec.ts` | 3 | process-wide webhook secrets are used only when the connection binds no reference; bound references win when they resolve; an unresolved reference refuses the connection instead of falling back (R40) |
+| `internal.int-spec.ts` | 2 | service-identity guard, idempotent job execution and sweep routes (R25, R58) |
+| `jobs-push.int-spec.ts` | 2 | Cloud Tasks hand-off of pending jobs, scheduled tasks, re-push after retry, rejected pushes left for the sweep, inert under the postgres driver (R58) |
+| `jobs-leases.int-spec.ts` | 3 | a reclaimed lease is not reset by recovery and the previous holder can neither complete nor fail the job; recovery of a dead worker's leases re-queues retryable jobs and fails exhausted ones; the runner reports a lost lease (R43) |
+| `inbox.int-spec.ts` | 2 | inbox row and processing job commit together; duplicate delivery re-enqueues an orphaned pending row (R38, R42) |
+| `scale.int-spec.ts` | 1 | 1,000-contact launch and restart during dispatch (R43, R59) |
 
 ## Unit suites
 
-- `libs/domain/src/lib/__tests__/*` (36): edit windows, scheduling, commands, consent derivation, service window, age bands, demographics, question/renderer rules, aggregates, CSV, spreadsheet neutralization, phone normalization, import rules, tokens, results text.
-- `libs/server/src/**/__tests__/*` (15): Meta webhook contract (raw-byte signatures, batched parsing, Flow response bounds), Meta send payloads and error classification including post-transmission resets as ambiguous sends, send policy gate, configuration validation (fail-closed live mode), Cloud Tasks adapter.
+- `libs/domain/src/lib/__tests__/*` (37, nine specs): edit windows and stale replies including ordering by arrival, scheduling, commands, consent derivation, question/renderer rules and selection validation, aggregates and small-cohort suppression, CSV and spreadsheet neutralization, import rules (including age-band conflicts), results text. Token helpers, demographic profile and cohort keys, phone normalization beyond what the import rules exercise, and the service-window check have no direct unit tests; the integration suites and the server send-policy and accept-invitation specs exercise them.
+- `libs/server/src/**/__tests__/*` (34): Meta webhook contract (raw-byte signatures, batched parsing, Flow response bounds), Meta send payloads and error classification including post-transmission resets as ambiguous sends, send policy gate, readiness rules per purpose, secret references, sender provisioning, configuration validation (fail-closed live mode), Cloud Tasks adapter, bootstrap argument parsing, invitation acceptance and its Firebase account handling.
 - `libs/contracts/src/lib/__tests__/schemas.spec.ts` (4): question/audience/query/launch/organization schemas.
 - `apps/web/src/app/**/*.spec.ts` (6): formatting helpers, API error mapping, chip component rendering.
 
@@ -51,12 +77,15 @@ What actually ran for this build, with outcomes. Environment: Linux sandbox, Nod
 6. Import wizard uploads the invalid fixture, maps columns, previews, and shows error rows.
 7. Manager authors a five-question survey with a fresh consented participant, previews messages, checks eligibility, launches; Admin answers in the simulator (buttons, list, multi-select Flow, rating), edits an answer inside the window, is refused after the clock advances 121 s; Viewer sees aggregates reflecting the edited answer and downloads the aggregates CSV.
 8. Shared results status visible after closure; STOP from a participant yields the opt-out acknowledgement and the contact shows Withdrawn.
+9. An operator bootstraps an organization through the worker CLI (`bootstrap:org`), the invited Admin accepts the printed single-use link in the dashboard and creates an account, and the new Admin signs in and sees `organization.bootstrapped` in the audit log.
 
 ## Manual UI inspection
 
 Screens exercised in a browser against both the dev server and the Docker/nginx production bundle: login, overview (counts, attention items, blocked dispatch list), contacts list/detail/form/import wizard/groups & tags, surveys list/editor/detail (overview, results, breakdowns, dispatch with message detail and retry, responses, share results), settings (organization, defaults, staff, messaging), audit log, simulator (conversation, controls, Flow forms, clock, faults, outbox). Loading, empty and error states render through the shared `rye-state` component; downloads work through authenticated fetches.
 
 ## Not run / external
+
+Everything that can run in the sandbox ran on the closing head `2c32aa5`, including the two checks `pnpm verify` skips unless asked (`--e2e`, `--docker`). What follows cannot run here.
 
 - Live Meta Cloud API calls (template registration and status, Flow upload/publish, real webhook traffic, real delivery). The adapter is covered by contract tests against the documented payload and webhook formats only.
 - Google OIDC verification for `/internal/*` under `JOB_DRIVER=cloud_tasks` (unit-tested request shaping only; the local shared-token path is integration-tested).
@@ -68,8 +97,9 @@ Screens exercised in a browser against both the dev server and the Docker/nginx 
 
 - Node slim images lack the `openssl` binary; Prisma prints an OpenSSL detection warning in the `bootstrap` container but migrations apply correctly.
 - The Angular dev server (`nx serve web`) takes 60-90 s to start on first run; Playwright waits up to 240 s.
-- The `jobs` table "dead jobs" counter on the overview counts permanently failed send jobs, which the seed creates deliberately as a diagnostics fixture.
-- A live deployment has no automated way to create its first organization and Admin membership (the demo seed is refused in live configuration); the messaging connection is created from Settings, but the organization itself needs an operator database insert. Tracked in issue #13.
+- The `jobs` table "dead jobs" counter on the overview counts permanently failed jobs of any kind (it filters on status FAILED only); the seed creates one deliberately, a permanent send failure for the failing demo contact, as a diagnostics fixture.
+- In live mode nothing sets a Flow binding to `PUBLISHED` (saving a Flow ID records `UNKNOWN`, and the application does not read a Flow's publication state from Meta), while the readiness check, the send gate and the profile guard require `PUBLISHED`. A live organization is therefore refused for surveys with a multi-select or Flow-rendered single-choice question, and while optional profile capture is enabled; surveys that need no Flow (yes/no, buttons or list single-choice, rating) with profile onboarding disabled are unaffected. Local behavior with the mock provider is complete. Found while correcting the setup guide and tracked in [issue #28](https://github.com/shaghab/Raaye/issues/28); `WHATSAPP_SETUP.md` step 5 states the gap and the interim limit.
+- Lint reports two warnings (no errors) that predate this record; see the summary.
 
 ## Review round 1 (Codex, commit 596ac4c)
 
@@ -207,7 +237,9 @@ Branch restarted from the merged `main` (d8f89c1). Checks run on the working tre
 | Migration | `20261007170000_import_row_applied_at` applied with `prisma migrate deploy`; `prisma migrate diff` reports no drift |
 | New integration coverage | `surveys-launch.int-spec.ts` "a status whose projection failed is applied by the provider retry and by the sweep instead of being dismissed as a duplicate" (projection fails once: no event row and no state change persisted; the retry is recorded and the state promoted; a genuine duplicate still creates no second event; dispatch metrics count the delivery; an unmatched READ is linked and applied by the sweep only once both writes succeed); `jobs-leases.int-spec.ts` (3 tests, see the suites table); `contacts.int-spec.ts` "a failure during processing answers with an error, keeps the applied rows and resumes exactly once per row" (450-row file, consent write fails in the second 200-row chunk: HTTP 500 `IMPORT_PROCESSING_FAILED` with the batch id and the partial summary, 200 contacts and 200 stamped rows, 250 pending, batch `FAILED` and `resumable`; the second confirm completes with 450 contacts, every row applied once, one consent event and one group membership per contact; audit trail confirmed/failed/resumed/completed) and "an import left CONFIRMED by a crash resumes once even when confirmed concurrently, and expired rows report a clear error" (two concurrent confirms, one completion audit, three contacts; a stopped batch past its retention window answers 409 before and after the retention purge, nothing imported) |
 
-Not run: nothing in this change touches the Meta adapter's outbound path, Cloud Tasks or the Docker assets; live Meta and GCP verification remain external as before.
+Not run: live Meta and GCP verification remain external as before.
+
+Correction (8 October 2026): this section originally said that nothing in the change touches Cloud Tasks. The Cloud Tasks adapter and the internal task endpoint are unchanged, but the change does rewrite the lease handling that Cloud Tasks task delivery shares with the sweep: a claim now carries its lease, completion and failure apply only while the claim still holds it and report `LOST` otherwise, and lease recovery is a single conditional update that clears the re-push marker. Those paths are covered locally by `jobs-leases.int-spec.ts` and `jobs-push.int-spec.ts`; Cloud Tasks delivery against Google remains unverified.
 
 ## Review loop for pull request #24 (status replay, job leases, import resume)
 
@@ -295,3 +327,33 @@ Not run: live Meta verification remains external as before.
 | 1 (pull request opened) | 4efe564 | No findings: the review completed with no threads, no review and no comment. |
 
 Nothing to resolve. On 22c495f (4efe564 adds only `plan/`): `pnpm verify` passed (lint 7 projects, strict typecheck 7 projects, unit tests 81, integration 14 suites / 96 tests, WhatsApp assets 8 checks, production builds) and `pnpm test:e2e` passed (9 journeys). The commits that record the review state change only `plan/` files and were not sent for a further round.
+
+## Closing verification on merged main (8 and 9 October 2026)
+
+Request: close out this record, remove the stale limitation, and re-run the two checks `pnpm verify` skips by default (the Docker smoke and the Playwright journeys) on merged `main`, so that the final evidence describes the code after the seven follow-up pull requests (#20 to #27) and not the original MVP head. Branch restarted from `main` at `db934b8`. No issues are closed by this pull request; issue #28 was found and filed while doing it.
+
+### Docker smoke on `db934b8`: failed, then fixed
+
+The smoke, run as it stood on `main`, failed: after `docker compose restart api worker` the dashboard answered 502 for `/api/v1/health/ready` and the script timed out waiting for it. The nginx error log showed `connect() failed (111: Connection refused)` to an upstream address (`172.18.0.5:3000`) that no longer belonged to the API, and the worker container was reported `unhealthy`. Two defects, both in files the MVP review's smoke could not catch:
+
+- **Stale upstream.** nginx resolves the `api` host name once, when it starts. Docker gives a restarted container the lowest free address, so when the API and the worker restart together they can swap addresses and the proxy keeps sending to the old one. The earlier pass is consistent with the containers happening to get their old addresses back; the failure was reproduced deterministically by stopping both and starting the worker before the API.
+- **Worker health.** The image's `HEALTHCHECK` probes the API port, which the worker never opens, so every worker container inherited a check it could not pass.
+
+Fix `26fb844`: the dashboard proxy uses Docker's resolver (`resolver 127.0.0.11 valid=5s`) with a variable `proxy_pass`, so it follows the API; the Compose worker service disables the inherited check; the smoke now also stops both services, starts the worker first and the API second, waits for readiness through the proxy, re-reads the user-created contact through the dashboard and asserts the worker is `running` and not `unhealthy`. The smoke failed before the fix (this section's first paragraph) and passed after it, on the existing Compose volume and again from empty volumes, then passed again on the closing head `2c32aa5`. In this sandbox the images are built with a host-network override kept outside the repository and the database is published on port 5433; neither changes a checked-in file.
+
+### Full run, and a failed typecheck on the way
+
+On `6e267b0` the full `pnpm verify -- --e2e` failed its typecheck step: the new isolation suite read a nullable `providerMessageId` into a typed filter (`tenant-isolation.int-spec.ts`, status-callback case). It was a defect in a test added by this pull request, not in product code. `2c32aa5` narrows the value, and also makes the test fail loudly if the invitation was never accepted by the provider, because posting a null id would have made the callback case vacuous. `pnpm verify -- --e2e` then passed on `2c32aa5` (figures in the summary), the Docker smoke passed on the same head, and the two checks were run one after the other because both start the Firebase Auth emulator on port 9099.
+
+### What changed besides the two re-runs
+
+- **Document audit.** Before re-running anything, every factual claim in the evidence and setup documents was checked against the code by independent reviewers, and each finding was re-derived by two further reviewers before being accepted (38 findings confirmed, 24 rejected). The confirmed ones were corrected in `plan/acceptance.md` (`f313cff`, `6e267b0`) and in the setup guides, `SECURITY.md`, `README.md`, `DEPLOYMENT.md`, `docs/DECISIONS.md` and the import fixtures README (`8d9aaa8`). The audit was read-only and could not run commands, so the recorded outcomes of runs were not part of it; this section and the summary are the re-measurement.
+- **Two-organization isolation suite** (`8c0fb20`, `tenant-isolation.int-spec.ts`, 6 tests). `AGENTS.md` section 7 asks for two organizations with the same phone number across direct object requests, lists, mutations, relation connects, reporting, exports, workers and webhooks; reporting, exports, workers and webhooks had no such test although `SECURITY.md` said they did. The suite fails when the webhook `phone_number_id` check is removed and when survey reads lose the tenant scope.
+- **R19 evidence** (`f2f316c`). The conversation journey now gives the contact a tag and a staff-verified non-member status before the profile step and asserts that a participant's membership claim is stored as self-reported while the verified value, its source and the tag stay as they were; with the profile handler changed to write the verified field too, it fails.
+- **Archive lock** (`cb28569`). Archiving now takes the contact row lock first and acts on the archive state the lock finds, as the decision record already claimed.
+- **Stale limitation removed.** The known-limitations list no longer says a live deployment has no way to create its first organization (closed by pull request #20 with `bootstrap:org`); it lists the Flow-binding gap instead.
+- **Newly recorded gap.** In live mode nothing marks a Flow binding `PUBLISHED`, so Flow-rendered questions and optional profile capture cannot pass live readiness: [issue #28](https://github.com/shaghab/Raaye/issues/28), documented in `WHATSAPP_SETUP.md`, `plan/acceptance.md` (R22) and above. It is a real limitation that earlier summaries, which tested against the mock provider, did not show.
+
+### Still not run
+
+Live Meta Cloud API calls, Google OIDC verification under Cloud Tasks, GCP deployment, Firefox and WebKit, and any capacity beyond the 1,000-contact scenario; see "Not run / external".
