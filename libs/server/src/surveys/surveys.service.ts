@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   pickLocale,
+  type AudienceDefinition,
   type ContentErrorDto,
   type LocalizedText,
   type Page,
@@ -90,6 +91,7 @@ export class SurveysService {
   async create(ctx: TenantContext, input: SurveyCreate): Promise<SurveyDetailDto> {
     if (ctx.role === 'VIEWER') throw forbidden();
     const db = this.dbFactory.for(ctx);
+    await this.assertAudienceReferences(db, input.audience);
     const org = await db.organization.findUniqueOrThrow({ where: { id: ctx.organizationId } });
     this.assertTimingPermission(ctx, input, { editWindowSeconds: org.defaultEditWindowSeconds, durationSeconds: org.defaultDurationSeconds, explicitClosesAt: null });
     const questions = input.questions ?? [];
@@ -121,6 +123,7 @@ export class SurveysService {
   async update(ctx: TenantContext, surveyId: string, input: SurveyUpdate): Promise<SurveyDetailDto> {
     if (ctx.role === 'VIEWER') throw forbidden();
     const db = this.dbFactory.for(ctx);
+    await this.assertAudienceReferences(db, input.audience);
     await db.$transaction(async (tx) => {
       // Survey row lock shared with launch and archive: the state and the revision are read and
       // validated under it, so an edit can neither overwrite a revision a launch is freezing nor
@@ -368,6 +371,21 @@ export class SurveysService {
         });
       }
     }
+  }
+
+  /**
+   * An audience definition is stored as JSON, so no foreign key ties its contact, group and tag
+   * ids to the organization. They are checked here, with the same answer a contact gets for a
+   * group or tag of another organization: not found, and nothing is stored.
+   */
+  private async assertAudienceReferences(db: ReturnType<TenantDbFactory['for']>, audience: AudienceDefinition | undefined): Promise<void> {
+    if (!audience) return;
+    const contactIds = new Set([...(audience.contactIds ?? []), ...(audience.exclude?.contactIds ?? [])]);
+    const groupIds = new Set([...(audience.groupIds ?? []), ...(audience.exclude?.groupIds ?? [])]);
+    const tagIds = new Set([...(audience.tagIds ?? []), ...(audience.exclude?.tagIds ?? [])]);
+    if (contactIds.size && (await db.contact.count({ where: { id: { in: [...contactIds] } } })) !== contactIds.size) throw notFound('Contact');
+    if (groupIds.size && (await db.group.count({ where: { id: { in: [...groupIds] } } })) !== groupIds.size) throw notFound('Group');
+    if (tagIds.size && (await db.tag.count({ where: { id: { in: [...tagIds] } } })) !== tagIds.size) throw notFound('Tag');
   }
 
   /** Only Admin changes timing; Survey Managers may echo unchanged values. */

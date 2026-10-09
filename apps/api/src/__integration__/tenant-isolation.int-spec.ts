@@ -48,6 +48,7 @@ describe('two organizations with the same phone number stay separate (R07, R08, 
     get: (path: string) => request(t.server).get(`/api/v1${path}`).set('Authorization', user.authorization),
     post: (path: string, body: Record<string, unknown> = {}) => request(t.server).post(`/api/v1${path}`).set('Authorization', user.authorization).send(body),
     patch: (path: string, body: Record<string, unknown> = {}) => request(t.server).patch(`/api/v1${path}`).set('Authorization', user.authorization).send(body),
+    del: (path: string) => request(t.server).delete(`/api/v1${path}`).set('Authorization', user.authorization),
   });
   const outbound = async (side: Side): Promise<ConvMessage[]> => ((await api(side).get(`/dev/simulator/conversation/${side.contactId}`).expect(200)).body as ConvMessage[]).filter((message) => message.direction === 'OUTBOUND');
   const tap = async (side: Side, label: string, within: (message: ConvMessage) => boolean = () => true) => {
@@ -160,7 +161,12 @@ describe('two organizations with the same phone number stay separate (R07, R08, 
         ['rename tag', () => as.patch(`/tags/${victim.tagId}`, { name: 'Hijacked' })],
         ['add own contact to foreign group', () => as.post(`/groups/${victim.groupId}/contacts/${attacker.contactId}`)],
         ['add foreign contact to own group', () => as.post(`/groups/${attacker.groupId}/contacts/${victim.contactId}`)],
-        ['remove foreign contact from foreign group', () => as.post(`/groups/${victim.groupId}/contacts/${victim.contactId}`)],
+        ['remove foreign contact from foreign group', () => as.del(`/groups/${victim.groupId}/contacts/${victim.contactId}`)],
+        ['remove own contact from foreign group', () => as.del(`/groups/${victim.groupId}/contacts/${attacker.contactId}`)],
+        ['add own contact to foreign tag', () => as.post(`/tags/${victim.tagId}/contacts/${attacker.contactId}`)],
+        ['add foreign contact to own tag', () => as.post(`/tags/${attacker.tagId}/contacts/${victim.contactId}`)],
+        ['remove foreign contact from foreign tag', () => as.del(`/tags/${victim.tagId}/contacts/${victim.contactId}`)],
+        ['remove own contact from foreign tag', () => as.del(`/tags/${victim.tagId}/contacts/${attacker.contactId}`)],
         ['simulator conversation', () => as.get(`/dev/simulator/conversation/${victim.contactId}`)],
       ];
       for (const [label, attempt] of attempts) {
@@ -217,8 +223,30 @@ describe('two organizations with the same phone number stay separate (R07, R08, 
     expect((await as.post(`/surveys/${B.surveyId}/test-runs`, { contactIds: [A.contactId] })).status).toBe(404);
     expect(await t.prisma.surveyRun.count({ where: { surveyId: B.surveyId, kind: 'TEST' } })).toBe(0);
     expect(await t.prisma.contact.count({ where: { organizationId: B.orgId, phoneE164: '+923009100002' } })).toBe(0);
-    // An audience that names a foreign contact reaches only the caller's own: the foreign contact never becomes a recipient.
-    const survey = (await as.post('/surveys', { internalTitle: 'Connect attempt', title: { en: 'Connect attempt' }, introduction: { en: 'Intro' }, questions: QUESTIONS, audience: { mode: 'SELECTED', contactIds: [A.contactId, B.contactId] } })).body;
+    // An audience definition is stored as JSON, so the API checks its references: a foreign contact, group or tag is refused in the audience and in its exclusions, on create and on update.
+    const draft = (audience: Record<string, unknown>) => ({ internalTitle: 'Connect attempt', title: { en: 'Connect attempt' }, introduction: { en: 'Intro' }, questions: QUESTIONS, audience });
+    const foreignAudiences: Record<string, unknown>[] = [
+      { mode: 'SELECTED', contactIds: [A.contactId, B.contactId] },
+      { mode: 'GROUPS_TAGS', groupIds: [A.groupId] },
+      { mode: 'GROUPS_TAGS', tagIds: [A.tagId] },
+      { mode: 'EVERYONE', exclude: { contactIds: [A.contactId] } },
+      { mode: 'EVERYONE', exclude: { groupIds: [A.groupId] } },
+      { mode: 'EVERYONE', exclude: { tagIds: [A.tagId] } },
+    ];
+    for (const audience of foreignAudiences) {
+      const created = await as.post('/surveys', draft(audience));
+      if (created.status !== 404) throw new Error(`create with ${jsonOf(audience)} answered ${describeResponse(created)}`);
+    }
+    expect(await t.prisma.survey.count({ where: { organizationId: B.orgId, internalTitle: 'Connect attempt' } })).toBe(0);
+    const survey = (await as.post('/surveys', draft({ mode: 'SELECTED', contactIds: [B.contactId] })).expect(201)).body;
+    for (const audience of foreignAudiences) {
+      const updated = await as.patch(`/surveys/${survey.id}`, { audience });
+      if (updated.status !== 404) throw new Error(`update with ${jsonOf(audience)} answered ${describeResponse(updated)}`);
+    }
+    expect((await as.get(`/surveys/${survey.id}`).expect(200)).body.revision.audience).toEqual({ mode: 'SELECTED', contactIds: [B.contactId], groupTagMatch: 'ANY' });
+    // The caller's own references are accepted, so the refusals above are isolation and not a rejected shape.
+    await as.patch(`/surveys/${survey.id}`, { audience: { mode: 'GROUPS_TAGS', groupIds: [B.groupId], tagIds: [B.tagId], exclude: { contactIds: [B.contactId] } } }).expect(200);
+    await as.patch(`/surveys/${survey.id}`, { audience: { mode: 'SELECTED', contactIds: [B.contactId] } }).expect(200);
     const preview = (await as.post(`/surveys/${survey.id}/audience-preview`)).body;
     expect(jsonOf(preview)).not.toContain(A.contactName);
     const launched = await as.post(`/surveys/${survey.id}/launch`, { mode: 'NOW' });
