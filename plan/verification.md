@@ -364,5 +364,8 @@ Live Meta Cloud API calls, Google OIDC verification under Cloud Tasks, GCP deplo
 | Round | Commit | Outcome |
 | --- | --- | --- |
 | 1 (pull request opened) | 321eafc | P1: the isolation suite accepted an audience naming another organization's contact and only checked that it was dropped at resolution, although the API stores the foreign id; the matrix called such connects refused. Confirmed on the code path (`SurveysService.create`/`update` stored the JSON unchecked, resolution filtered it) and fixed in `b893f79` by refusing the ids on write. P2: the group "removal" case sent POST, so the DELETE routes were never reached. Confirmed; `b893f79` sends DELETE and adds the tag routes. |
+| 2 (`@codex review` after the fix push) | eb6ecf2 (b893f79 plus `plan/` records) | No findings: "Didn't find any major issues"; both round 1 threads resolved. |
 
 Mutation checks on `b893f79`: with the audience check turned into a no-op the suite fails on the first foreign audience (201 instead of 404); with the group existence check removed from the removal path the suite fails on the DELETE case (204 instead of 404). `pnpm verify -- --e2e` (7 steps), the Docker smoke, uncached lint, typecheck and build, the unit and integration targets (81 unit tests, 15 suites / 102 integration tests) and the scale scenario all passed on `b893f79`.
+
+The commits that record the review state after round 2 change only `plan/` files and were not sent for a further round.
