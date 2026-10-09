@@ -11,12 +11,38 @@
       "round": 1,
       "headSha": "321eafc",
       "requestedAt": "2026-10-09T02:18:01.073256+00:00",
+      "status": "completed",
+      "trigger": "pull request opened (Codex reviews new pull requests automatically)",
+      "reviewedSha": "321eafc",
+      "findings": 2
+    },
+    {
+      "round": 2,
+      "headSha": "eb6ecf2",
+      "requestedAt": "2026-10-09T02:34:14Z",
       "status": "running",
-      "trigger": "pull request opened (Codex reviews new pull requests automatically)"
+      "trigger": "@codex review after fix push b893f79"
     }
   ],
-  "processedFindings": [],
+  "processedFindings": [
+    {
+      "commentId": 4226018959,
+      "priority": "P1",
+      "disposition": "fixed",
+      "commit": "b893f79",
+      "summary": "foreign audience ids accepted and silently dropped",
+      "thread": "resolved"
+    },
+    {
+      "commentId": 4226018969,
+      "priority": "P2",
+      "disposition": "fixed",
+      "commit": "b893f79",
+      "summary": "removal case sent POST instead of DELETE",
+      "thread": "resolved"
+    }
+  ],
   "issues": [],
   "blockers": [],
-  "updatedAt": "2026-10-09T02:18:01.073256+00:00"
+  "updatedAt": "2026-10-09T02:34:14.957488+00:00"
 }
